@@ -24,17 +24,79 @@ confusion_matrix <- function(actual, predicted) {
   table(Predicted = predicted, Actual = actual)
 }
 
-# ============================================================
-# Regresja
-# ============================================================
-
-#KNN
-train_knn <- function(train_X, train_y) {
-  return(list(X = train_X, y = train_y))
+# ===============================
+# Funkcja walidacji krzyżowej zwracająca wiele miar
+# ===============================
+custom_cv <- function(data, k_folds, train_func, predict_func, 
+                            performance_funcs,  # np. list(accuracy = accuracy)
+                            hyperparams = NULL, target_col, pass_to_predict = TRUE) {
+  n <- nrow(data)
+  indices <- sample(1:n)  # losowe mieszanie indeksów
+  fold_size <- floor(n / k_folds)
+  
+  # Przygotowujemy listę na wyniki dla każdej miary
+  results <- list()
+  for (metric in names(performance_funcs)) {
+    results[[metric]] <- numeric(k_folds)
+  }
+  
+  for (i in 1:k_folds) {
+    if (i < k_folds) {
+      test_idx <- indices[((i - 1) * fold_size + 1):(i * fold_size)]
+    } else {
+      test_idx <- indices[((i - 1) * fold_size + 1):n]
+    }
+    
+    train_data <- data[-test_idx, ]
+    test_data  <- data[test_idx, ]
+    
+    # Rozdzielamy cechy i zmienną celu
+    train_X <- train_data[, setdiff(names(train_data), target_col)]
+    train_y <- train_data[[target_col]]
+    test_X  <- test_data[, setdiff(names(test_data), target_col)]
+    test_y  <- test_data[[target_col]]
+    
+    # Przygotowanie argumentów dla funkcji treningowej
+    args_train <- list(train_X, train_y)
+    if (!is.null(hyperparams)) {
+      args_train <- c(args_train, hyperparams)
+    }
+    model <- do.call(train_func, args_train)
+    
+    # Przygotowanie argumentów dla funkcji predykcyjnej
+    args_predict <- list(model, test_X)
+    if (!is.null(hyperparams) && pass_to_predict) {
+      args_predict <- c(args_predict, hyperparams)
+    }
+    predictions <- do.call(predict_func, args_predict)
+    
+    # Obliczamy i zapisujemy każdą miarę
+    for (metric in names(performance_funcs)) {
+      results[[metric]][i] <- performance_funcs[[metric]](test_y, predictions)
+    }
+  }
+  
+  # Zwracamy średnie wartości dla każdej miary
+  sapply(results, mean)
 }
 
-# Funkcja predykcyjna dla KNN
-predict_knn <- function(model, test_X, k = 10) {
+# ============================================================
+# Problem Regresji
+# ============================================================
+
+# --- Model KNN ---
+train_knn <- function(train_X, train_y, ...) {
+  args <- list(...)
+  if (is.null(args$k)) stop("Podaj wartość k!")
+  k <- args$k
+  model <- list(X = train_X, y = train_y, k = k)
+  return(model)
+}
+
+predict_knn <- function(model, test_X, ...) {
+  args <- list(...)
+  # Używamy przekazanego k, jeśli jest, lub zapisanego w modelu
+  k_used <- if (!is.null(args$k)) args$k else model$k
   train_X <- as.matrix(model$X)
   train_y <- model$y
   test_X <- as.matrix(test_X)
@@ -43,149 +105,141 @@ predict_knn <- function(model, test_X, k = 10) {
   predictions <- numeric(n_test)
   
   for (i in 1:n_test) {
-    # Odległości euklidesowych
-    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), ncol = ncol(train_X), byrow = TRUE))^2))
-    
-    # Wybór k 
-    neighbors <- order(distances)[1:k]
-  
+    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X),
+                                                ncol = ncol(train_X), byrow = TRUE))^2))
+    neighbors <- order(distances)[1:k_used]
     predictions[i] <- mean(train_y[neighbors])
   }
   
   return(predictions)
 }
 
-#Drzewo
-build_tree <- function(X, y, depth) {
-  if (depth == 0 || length(unique(y)) == 1) {
-    return(mean(y))
+# --- Model drzewa decyzyjnego ---
+train_tree <- function(train_X, train_y, max_depth, ...) {
+  # Funkcja rekurencyjna budująca drzewo
+  build_tree <- function(X, y, depth) {
+    if (depth == 0 || length(unique(y)) == 1) {
+      return(mean(y))
+    }
+    best_split <- NULL
+    best_mse <- Inf
+    n <- ncol(X)
+    
+    for (feature in 1:n) {
+      for (split in unique(X[, feature])) {
+        left <- y[X[, feature] <= split]
+        right <- y[X[, feature] > split]
+        if (length(left) == 0 || length(right) == 0) next
+        mse <- (sum((left - mean(left))^2) + sum((right - mean(right))^2)) / length(y)
+        if (mse < best_mse) {
+          best_mse <- mse
+          best_split <- list(feature = feature, value = split)
+        }
+      }
+    }
+    if (is.null(best_split)) {
+      return(mean(y))
+    }
+    left_indices <- X[, best_split$feature] <= best_split$value
+    right_indices <- X[, best_split$feature] > best_split$value
+    left_tree <- build_tree(X[left_indices, , drop = FALSE], y[left_indices], depth - 1)
+    right_tree <- build_tree(X[right_indices, , drop = FALSE], y[right_indices], depth - 1)
+    return(list(split = best_split, left = left_tree, right = right_tree))
   }
   
-  best_split <- NULL
-  best_mse <- Inf
-  n <- ncol(X)
+  tree <- build_tree(as.matrix(train_X), train_y, max_depth)
+  model <- list(tree = tree, max_depth = max_depth)
+  return(model)
+}
+
+predict_tree <- function(model, X, ...) {
+  tree <- model$tree
   
-  for (feature in 1:n) {
-    for (split in unique(X[, feature])) {
-      left <- y[X[, feature] <= split]
-      right <- y[X[, feature] > split]
-      mse <- (sum((left - mean(left))^2) + sum((right - mean(right))^2)) / length(y)
-      
-      if (mse < best_mse) {
-        best_mse <- mse
-        best_split <- list(feature = feature, value = split, left = left, right = right)
-      }
+  predict_recursive <- function(tree, X_row) {
+    if (!is.list(tree)) return(tree)
+    if (X_row[tree$split$feature] <= tree$split$value) {
+      return(predict_recursive(tree$left, X_row))
+    } else {
+      return(predict_recursive(tree$right, X_row))
     }
   }
   
-  if (!is.null(best_split)) {
-    left_tree <- build_tree(X[X[, best_split$feature] <= best_split$value, ], 
-                            best_split$left, depth - 1)
-    right_tree <- build_tree(X[X[, best_split$feature] > best_split$value, ], 
-                             best_split$right, depth - 1)
-    return(list(split = best_split, left = left_tree, right = right_tree))
-  }
-}
-
-train_tree <- function(train_X, train_y, max_depth) {
-  tree <- build_tree(train_X, train_y, max_depth)
-  return(tree)
-}
-
-# Predykcja dla drzewa decyzyjnego
-predict_tree <- function(tree, X) {
-  if (!is.list(tree)) {
-    return(rep(tree, nrow(X)))
-  }
-  
-  predictions <- numeric(nrow(X))
-  left_indices <- X[, tree$split$feature] <= tree$split$value
-  predictions[left_indices] <- predict_tree(tree$left, X[left_indices, , drop = FALSE])
-  predictions[!left_indices] <- predict_tree(tree$right, X[!left_indices, , drop = FALSE])
+  X <- as.matrix(X)
+  predictions <- apply(X, 1, function(row) predict_recursive(tree, row))
   return(predictions)
 }
 
-#Siec neuronowa
-train_nn <- function(train_X, train_y, hidden_neurons = 50, epochs = 2000, learning_rate = 0.0005) {
+# --- Model sieci neuronowej ---
+clip_gradient <- function(grad, threshold = 1.0) {
+  norm_grad <- sqrt(sum(grad^2))
+  if (norm_grad > threshold) {
+    grad <- grad * (threshold / norm_grad)
+  }
+  return(grad)
+}
+
+# --- Model sieci neuronowej z gradient clipping ---
+train_nn <- function(train_X, train_y, hidden_neurons, epochs, learning_rate, clip_threshold = 1.0, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.numeric(train_y)
-  
-  # Standaryzacja cech wejściowych
-  mean_X <- apply(train_X, 2, mean)
-  sd_X <- apply(train_X, 2, sd)
-  train_X <- scale(train_X, center = mean_X, scale = sd_X)
-  
-  # Standaryzacja train_y
-  mean_y <- mean(train_y)
-  sd_y <- sd(train_y)
-  train_y_scaled <- (train_y - mean_y) / sd_y
-  
   n_features <- ncol(train_X)
   n_samples <- nrow(train_X)
   
-  # Więcej neuronów ukrytych + lepsza inicjalizacja
+  # Inicjalizacja wag i biasów
   w_hidden <- matrix(rnorm(n_features * hidden_neurons, mean = 0, sd = 0.01), n_features, hidden_neurons)
   b_hidden <- rep(0, hidden_neurons)
   w_output <- matrix(rnorm(hidden_neurons, mean = 0, sd = 0.01), hidden_neurons, 1)
   b_output <- 0
   
-  sigmoid <- function(x) 1 / (1 + exp(-x))
-  sigmoid_derivative <- function(x) x * (1 - x)
-  
-  tanh_derivative <- function(x) ifelse(abs(x) < 1, 1 - x^2, 0)
+  # Funkcja aktywacji: tanh oraz jej pochodna
+  tanh_deriv <- function(x) 1 - tanh(x)^2
   
   for (epoch in 1:epochs) {
-   
-    hidden_layer <- tanh(train_X %*% w_hidden + matrix(b_hidden, n_samples, hidden_neurons, byrow = TRUE))
-    output_layer <- hidden_layer %*% w_output + b_output  
+    hidden_input <- train_X %*% w_hidden + matrix(b_hidden, n_samples, hidden_neurons, byrow = TRUE)
+    hidden_output <- tanh(hidden_input)
+    output <- hidden_output %*% w_output + b_output
+    error <- train_y - output
+    loss <- mean(error^2)
     
-    error <- train_y_scaled - output_layer
-    d_output <- error  
+    if (epoch %% 100 == 0) {
+      cat("Epoka:", epoch, "Strata:", loss, "\n")
+    }
     
-    # Dopasowanie wymiarów 
-    d_hidden <- d_output %*% t(w_output) * tanh_derivative(hidden_layer)
+    # Obliczanie gradientów
+    d_output <- error  # dla regresji z liniową aktywacją na wyjściu
+    d_hidden <- (d_output %*% t(w_output)) * tanh_deriv(hidden_input)
     
-    # aktualiz. wag
-    w_output <- w_output + t(hidden_layer) %*% d_output * learning_rate
+    # Zastosowanie gradient clipping
+    d_output <- clip_gradient(d_output, threshold = clip_threshold)
+    d_hidden <- clip_gradient(d_hidden, threshold = clip_threshold)
+    
+    # Aktualizacja wag i biasów
+    w_output <- w_output + t(hidden_output) %*% d_output * learning_rate
     b_output <- b_output + sum(d_output) * learning_rate
     w_hidden <- w_hidden + t(train_X) %*% d_hidden * learning_rate
     b_hidden <- b_hidden + colSums(d_hidden) * learning_rate
   }
   
-  return(list(
-    w_hidden = w_hidden,
-    b_hidden = b_hidden,
-    w_output = w_output,
-    b_output = b_output,
-    mean_y = mean_y,
-    sd_y = sd_y,
-    mean_X = mean_X,
-    sd_X = sd_X
-  ))
+  model <- list(w_hidden = w_hidden, b_hidden = b_hidden, w_output = w_output, b_output = b_output)
+  return(model)
 }
 
-predict_nn <- function(model, test_X) {
+predict_nn <- function(model, test_X, ...) {
   test_X <- as.matrix(test_X)
-  
-  # Standaryzacja cech wejściowych -treningu
-  test_X <- scale(test_X, center = model$mean_X, scale = model$sd_X)
-  
-  hidden_layer <- tanh(test_X %*% model$w_hidden + matrix(model$b_hidden, nrow(test_X), length(model$b_hidden), byrow = TRUE))
-  predictions_scaled <- hidden_layer %*% model$w_output + model$b_output  # Liniowa aktywacja
-  
-  predictions_scaled[is.na(predictions_scaled)] <- 0
-  
-  # Odt. rzeczywistych wart. y
-  predictions <- predictions_scaled * model$sd_y + model$mean_y
-  return(predictions)
+  hidden_input <- test_X %*% model$w_hidden + matrix(model$b_hidden, nrow(test_X), ncol(model$w_hidden), byrow = TRUE)
+  hidden_output <- tanh(hidden_input)
+  predictions <- hidden_output %*% model$w_output + model$b_output
+  return(as.vector(predictions))
 }
 
 # ============================================================
 # Klasyfikacja binarna
 # ============================================================
 
-#knn
-train_knn_classification <- function(train_X, train_y) {
+# --- k-NN dla klasyfikacji ---
+train_knn_classification <- function(train_X, train_y, ...) {
+  # Nawet jeśli nie wykorzystujemy hiperparametrów w treningu, dodajemy ...,
+  # żeby funkcja mogła przyjmować dodatkowe argumenty przekazywane przez CV.
   return(list(X = train_X, y = train_y))
 }
 
@@ -198,18 +252,21 @@ predict_knn_classification <- function(model, test_X, k = 10, threshold = 0.5) {
   predictions <- numeric(n_test)
   
   for (i in 1:n_test) {
-    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), ncol = ncol(train_X), byrow = TRUE))^2))
+    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), 
+                                                ncol = ncol(train_X), byrow = TRUE))^2))
     neighbors <- order(distances)[1:k]
-  
-    predictions[i] <- ifelse(mean(train_y[neighbors]) > threshold, 1, 0)
+    # Konwersja etykiet z faktora na liczby
+    neighbor_vals <- as.numeric(as.character(train_y[neighbors]))
+    # Jeśli średnia z sąsiadów przekracza próg, przypisz 1, w przeciwnym razie 0
+    predictions[i] <- ifelse(mean(neighbor_vals) > threshold, 1, 0)
   }
   
   return(predictions)
 }
 
 
-#drzewo
-train_tree_classification <- function(X, y, depth) {
+# --- Drzewo decyzyjne dla klasyfikacji ---
+train_tree_classification <- function(X, y, depth, ...) {
   if (depth == 0 || length(unique(y)) == 1) {
     return(as.integer(names(sort(table(y), decreasing = TRUE)[1])))
   }
@@ -249,13 +306,11 @@ train_tree_classification <- function(X, y, depth) {
   return(list(split = best_split, left = left_tree, right = right_tree))
 }
 
-
-predict_tree_classification <- function(tree, X) {
+predict_tree_classification <- function(tree, X, ...) {
   predictions <- numeric(nrow(X))
   
   for (i in 1:nrow(X)) {
     node <- tree
-    
     while (is.list(node)) {
       if (X[i, node$split$feature] <= node$split$value) {
         node <- node$left
@@ -263,16 +318,14 @@ predict_tree_classification <- function(tree, X) {
         node <- node$right
       }
     }
-    
     predictions[i] <- node
   }
   
   return(as.integer(predictions))
 }
 
-
-#sieć neuronowa
-train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epochs = 2000, learning_rate = 0.0005) {
+# --- Sieć neuronowa dla klasyfikacji ---
+train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epochs = 2000, learning_rate = 0.0005, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.numeric(train_y)
   
@@ -291,12 +344,22 @@ train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epoch
   sigmoid <- function(x) 1 / (1 + exp(-x))
   sigmoid_derivative <- function(x) x * (1 - x)
   
+  # Wektor do zapisywania wartości straty
+  loss_history <- numeric(epochs)
+  
   for (epoch in 1:epochs) {
     hidden_layer <- tanh(train_X %*% w_hidden + matrix(b_hidden, n_samples, hidden_neurons, byrow = TRUE))
     output_layer <- sigmoid(hidden_layer %*% w_output + b_output)
     error <- train_y - output_layer
-    d_output <- error * sigmoid_derivative(output_layer)
+    loss <- mean(error^2)
+    loss_history[epoch] <- loss
     
+    # Wypisywanie co 100 epok
+    if (epoch %% 100 == 0) {
+      cat("Epoka:", epoch, "Strata:", loss, "\n")
+    }
+    
+    d_output <- error * sigmoid_derivative(output_layer)
     d_hidden <- d_output %*% t(w_output) * (1 - hidden_layer^2)
     
     w_output <- w_output + t(hidden_layer) %*% d_output * learning_rate
@@ -315,17 +378,16 @@ train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epoch
   ))
 }
 
-predict_nn_classification <- function(model, test_X) {
+predict_nn_classification <- function(model, test_X, ...) {
   test_X <- as.matrix(test_X)
-  
   test_X <- scale(test_X, center = model$mean_X, scale = model$sd_X)
   
   hidden_layer <- tanh(test_X %*% model$w_hidden + matrix(model$b_hidden, nrow(test_X), length(model$b_hidden), byrow = TRUE))
-  predictions_prob <- 1 / (1 + exp(-(hidden_layer %*% model$w_output + model$b_output)))  # Sigmoid
-  
+  predictions_prob <- 1 / (1 + exp(-(hidden_layer %*% model$w_output + model$b_output)))
   
   return(as.integer(predictions_prob > 0.5))
 }
+
 
 # ============================================================
 # Klasyfikacja wieloklasowa
