@@ -87,20 +87,28 @@ caret_knn_rmse <- min(knn_model_caret$results$RMSE)
 caret_knn_r2   <- min(knn_model_caret$results$Rsquared)
 
 # Model drzewa decyzyjnego przy użyciu rpart
-tree_model_caret <- rpart(Concrete_Compressive_Strength ~ ., 
+tree_model_caret <- train(Concrete_Compressive_Strength ~ ., 
                           data = data_reg, 
+                          method = "rpart", 
+                          tuneGrid = data.frame(cp = 0.001),  # możesz dostroić cp
+                          trControl = ctrl,
                           control = rpart.control(maxdepth = 5))
-caret_tree_predictions <- predict(tree_model_caret, newdata = data_reg)
-caret_tree_rmse <- rmse(data_reg$Concrete_Compressive_Strength, caret_tree_predictions)
-caret_tree_r2   <- r2_score(data_reg$Concrete_Compressive_Strength, caret_tree_predictions)
+caret_tree_rmse <- min(tree_model_caret$results$RMSE)
+caret_tree_r2   <- max(tree_model_caret$results$Rsquared)
+
+ctrl <- trainControl(method = "cv", number = 10)
 
 # Model sieci neuronowej przy użyciu nnet
-nn_model_caret <- nnet(Concrete_Compressive_Strength ~ ., 
-                       data = data_reg, 
-                       size = 50, maxit = 2000, decay = 0.0001, linout = TRUE, trace = TRUE)
-caret_nn_predictions <- predict(nn_model_caret, newdata = data_reg)
-caret_nn_rmse <- rmse(data_reg$Concrete_Compressive_Strength, caret_nn_predictions)
-caret_nn_r2   <- r2_score(data_reg$Concrete_Compressive_Strength, caret_nn_predictions)
+nn_model_caret <- train(Concrete_Compressive_Strength ~ ., 
+                        data = data_reg, 
+                        method = "nnet", 
+                        tuneGrid = data.frame(size = 50, decay = 0.0001),
+                        trControl = ctrl,
+                        maxit = 2000,
+                        linout = TRUE,
+                        trace = TRUE)  # trace=FALSE, żeby nie "zaśmiecać" konsoli
+caret_nn_rmse <- min(nn_model_caret$results$RMSE)
+caret_nn_r2   <- max(nn_model_caret$results$Rsquared)
 
 cat("\nWyniki modeli pakietowych:\n")
 cat("Caret KNN RMSE:", caret_knn_rmse, "R^2:", caret_knn_r2, "\n")
@@ -153,18 +161,14 @@ encoded_data <- as.data.frame(encoded_data)
 # Dołączamy oryginalną zmienną celu (numeryczną 0/1)
 encoded_data$y <- data$y
 
-# -------------------------------
 # Przygotowanie danych dla własnych modeli (numeryczne y)
-# -------------------------------
 features_scaled <- as.data.frame(scale(encoded_data[, -ncol(encoded_data)]))
 target <- encoded_data$y
 data_cls_numeric <- cbind(features_scaled, y = target)
 # Sprawdź, że y jest numeryczne
 str(data_cls_numeric$y)  # Powinno pokazać 'num [1:...]'
 
-# -------------------------------
 # Przygotowanie danych dla modeli pakietowych (factor y)
-# -------------------------------
 # Możesz skopiować dane z wersji numerycznej, a następnie przekonwertować y na factor.
 data_cls_factor <- data_cls_numeric
 data_cls_factor$y <- as.factor(data_cls_factor$y)
@@ -304,8 +308,6 @@ ggplot(results_comparison_cls, aes(x = Model, y = Accuracy, fill = Podejście)) 
 # ============================================================
 # Problem Klasyfikacji Wieloklasowej
 # ============================================================
-# Wczytanie bibliotek
-
 
 source("funkcje.R")
 
@@ -356,13 +358,7 @@ features <- data[, -ncol(data)]
 # Standaryzacja cech
 features_scaled <- as.data.frame(scale(features))
 
-# Podział na zbiór treningowy i testowy (80/20)
-set.seed(123)
-train_indices <- sample(1:nrow(features), 0.8 * nrow(features))
-train_X <- features_scaled[train_indices, ]
-train_y <- target[train_indices]
-test_X <- features_scaled[-train_indices, ]
-test_y <- target[-train_indices]
+data_multi <- cbind(features_scaled, quality = target)
 
 # Parametry modeli
 k <- 5  # l. sąsiadów dla KNN
@@ -371,142 +367,111 @@ hidden_neurons <- 100  # l. neuronów ukrytych
 epochs <- 5000  # l. epok dla sieci neuronowej
 learning_rate <- 0.0001 # wsp. uczenia
 
-# Trening modeli klasyfikacyjnych
-knn_model <- train_knn_multiclass(train_X, train_y)
-tree_model <- train_tree_multiclass(train_X, train_y, max_depth)
-nn_model <- train_nn_multiclass(train_X, train_y, hidden_neurons, epochs, learning_rate)
+set.seed(123)
 
-# Predykcja modeli
-knn_predictions <- predict_knn_multiclass(knn_model, test_X, k)
-tree_predictions <- predict_tree_multiclass(tree_model, test_X)
-nn_predictions <- predict_nn_multiclass(nn_model, test_X)
-
-
-# Funkcja do obliczania dokładności
-accuracy <- function(actual, predicted) {
-  sum(actual == predicted) / length(actual)
-}
-
-# Dokładność dla każdego modelu
-knn_acc <- accuracy(test_y, knn_predictions)
-tree_acc <- accuracy(test_y, tree_predictions)
-nn_acc <- accuracy(test_y, nn_predictions)
-
-cat("KNN Accuracy:", knn_acc, "\n")
-cat("Drzewo Decyzyjne Accuracy:", tree_acc, "\n")
-cat("Sieć Neuronowa Accuracy:", nn_acc, "\n")
-
-# Macierz pomyłek
-confusion_matrix <- function(actual, predicted) {
-  table(Predicted = predicted, Actual = actual)
-}
-
-cat("KNN Confusion Matrix:\n")
-print(confusion_matrix(test_y, knn_predictions))
-
-cat("Drzewo Decyzyjne Confusion Matrix:\n")
-print(confusion_matrix(test_y, tree_predictions))
-
-cat("Sieć Neuronowa Confusion Matrix:\n")
-print(confusion_matrix(test_y, nn_predictions))
-
-# Wizualizacja
-results <- data.frame(
-  Model = c("KNN", "Drzewo Decyzyjne", "Sieć Neuronowa"),
-  Accuracy = c(knn_acc, tree_acc, nn_acc)
+# Modele własne
+metrics_knn_multi <- custom_cv(
+  data = data_multi,
+  k_folds = 10,
+  train_func = train_knn_multiclass,
+  predict_func = predict_knn_multiclass,
+  performance_funcs = list(accuracy = accuracy),
+  hyperparams = list(k = k),   # przekazujemy parametr k
+  target_col = "quality",
+  pass_to_predict = TRUE       # jeśli funkcja predykcyjna również potrzebuje parametru k
 )
 
-ggplot(results, aes(x = Model, y = Accuracy, fill = Model)) +
-  geom_bar(stat = "identity", color = "black") +
-  ggtitle("Porównanie dokładności modeli klasyfikacyjnych") +
-  theme_minimal()
+metrics_tree_multi <- custom_cv(
+  data = data_multi,
+  k_folds = 10,
+  train_func = train_tree_multiclass,
+  predict_func = predict_tree_multiclass,
+  performance_funcs = list(accuracy = accuracy),
+  hyperparams = list(depth = max_depth),  # Używamy "depth", bo tak definiuje funkcja
+  target_col = "quality",
+  pass_to_predict = FALSE
+)
 
-# Wizualizacja macierzy pomyłek
-plot_confusion_matrix <- function(actual, predicted, model_name) {
-  cm <- as.data.frame(table(Predicted = predicted, Actual = actual))
-  
-  ggplot(cm, aes(x = Actual, y = Predicted, fill = Freq)) +
-    geom_tile(color = "black") +
-    scale_fill_gradient(low = "white", high = "blue") +
-    geom_text(aes(label = Freq), vjust = 1.5, color = "black", size = 5) +
-    ggtitle(paste("Macierz Pomyłek -", model_name)) +
-    theme_minimal()
-}
+metrics_nn_multi <- custom_cv(
+  data = data_multi,
+  k_folds = 10,
+  train_func = train_nn_multiclass,
+  predict_func = predict_nn_multiclass,
+  performance_funcs = list(accuracy = accuracy),
+  hyperparams = list(hidden_neurons = hidden_neurons, epochs = epochs, learning_rate = learning_rate),
+  target_col = "quality",
+  pass_to_predict = FALSE
+)
 
-plot_confusion_matrix(test_y, knn_predictions, "KNN")
-plot_confusion_matrix(test_y, tree_predictions, "Drzewo Decyzyjne")
-plot_confusion_matrix(test_y, nn_predictions, "Sieć Neuronowa")
+cat("Wyniki CV dla własnych modeli (klasyfikacja wieloklasowa):\n")
+cat("KNN Accuracy:", metrics_knn_multi["accuracy"], "\n")
+cat("Drzewo Accuracy:", metrics_tree_multi["accuracy"], "\n")
+cat("Sieć Neuronowa Accuracy:", metrics_nn_multi["accuracy"], "\n")
 
 # Modele pakietowe (wieloklasowe)
 
-train_data_pkg_multi <- cbind(train_X, quality = as.factor(train_y))
-test_data_pkg_multi  <- cbind(test_X,  quality = as.factor(test_y))
+# Przygotowanie danych – dla modeli pakietowych target (quality) traktujemy jako factor:
+train_indices <- createDataPartition(data_multi$quality, p = 0.8, list = FALSE)
+train_data_pkg_multi <- cbind(features_scaled[train_indices, ], quality = as.factor(target[train_indices]))
+test_data_pkg_multi  <- cbind(features_scaled[-train_indices, ], quality = as.factor(target[-train_indices]))
 
+# Upewnij się, że poziomy targetu są poprawne (np. zaczynają się od litery)
 levels(train_data_pkg_multi$quality) <- make.names(levels(train_data_pkg_multi$quality))
 levels(test_data_pkg_multi$quality)  <- make.names(levels(test_data_pkg_multi$quality))
 
+# Ustawienia kontrolne dla caret – 10-krotna CV
+ctrl <- trainControl(method = "cv", number = 10)
+
 # Model KNN przy użyciu caret
-set.seed(123)
-ctrl_multi <- trainControl(method = "cv", number = 10)
 knn_model_pkg_multi <- train(quality ~ ., 
                              data = train_data_pkg_multi, 
                              method = "knn", 
                              tuneGrid = data.frame(k = k),
-                             trControl = ctrl_multi)
+                             trControl = ctrl)
 knn_predictions_pkg_multi <- predict(knn_model_pkg_multi, newdata = test_data_pkg_multi)
 knn_acc_pkg_multi <- mean(knn_predictions_pkg_multi == test_data_pkg_multi$quality)
 
-# Drzewo decyzyjne przy użyciu rpart
-tree_model_pkg_multi <- rpart::rpart(quality ~ ., 
-                                     data = train_data_pkg_multi, 
-                                     method = "class", 
-                                     control = rpart.control(maxdepth = max_depth))
+# Model drzewa decyzyjnego przy użyciu rpart
+tree_model_pkg_multi_cv <- train(quality ~ ., 
+                                 data = train_data_pkg_multi, 
+                                 method = "rpart", 
+                                 tuneGrid = data.frame(cp = 0.01),  # lub inna wartość, którą chcesz dostroić
+                                 trControl = ctrl,
+                                 control = rpart.control(maxdepth = max_depth))
 tree_predictions_pkg_multi <- predict(tree_model_pkg_multi, newdata = test_data_pkg_multi, type = "class")
 tree_acc_pkg_multi <- mean(tree_predictions_pkg_multi == test_data_pkg_multi$quality)
 
-# Sieć neuronowa przy użyciu nnet
-x_train_multi <- as.matrix(train_data_pkg_multi[, -ncol(train_data_pkg_multi)])
-y_train_multi <- class.ind(train_data_pkg_multi$quality)
-nn_model_pkg_multi <- nnet::nnet(x_train_multi, y_train_multi,
-                                 size = hidden_neurons, 
-                                 maxit = epochs, 
-                                 decay = learning_rate, 
-                                 trace = FALSE,
-                                 MaxNWts = 20000)
-x_test_multi <- as.matrix(test_data_pkg_multi[, -ncol(test_data_pkg_multi)])
-nn_probs_pkg_multi <- predict(nn_model_pkg_multi, newdata = x_test_multi, type = "raw")
-# Dla każdej obserwacji wybieramy indeks maksymalnego prawdopodobieństwa
-nn_pred_indices <- apply(nn_probs_pkg_multi, 1, which.max)
-# Mapujemy indeksy na etykiety (poziomy faktora)
-nn_predictions_pkg_multi <- factor(nn_pred_indices, labels = levels(test_data_pkg_multi$quality))
-nn_acc_pkg_multi <- mean(nn_predictions_pkg_multi == test_data_pkg_multi$quality)
+# Model sieci neuronowej przy użyciu nnet
+nn_model_pkg_multi_cv <- train(quality ~ ., 
+                               data = train_data_pkg_multi, 
+                               method = "nnet", 
+                               tuneGrid = data.frame(size = hidden_neurons, decay = learning_rate),
+                               trControl = ctrl,
+                               maxit = epochs,
+                               linout = FALSE,
+                               trace = TRUE,
+                               MaxNWts = 20000)
+nn_predictions_pkg_multi_cv <- predict(nn_model_pkg_multi_cv, newdata = test_data_pkg_multi)
+nn_acc_pkg_multi_cv <- mean(nn_predictions_pkg_multi_cv == test_data_pkg_multi$quality)
 
-cat("Modele pakietowe (wieloklasowe):\n")
-cat("KNN Accuracy:", knn_acc_pkg_multi, "\n")
-cat("Drzewo Decyzyjne Accuracy:", tree_acc_pkg_multi, "\n")
-cat("Sieć Neuronowa Accuracy:", nn_acc_pkg_multi, "\n")
+
+cat("\nWyniki modeli pakietowych (wieloklasowych):\n")
+cat("Caret KNN Accuracy:", knn_acc_pkg_multi, "\n")
+cat("Caret Drzewo Accuracy:", tree_acc_pkg_multi, "\n")
+cat("Caret Sieć NN Accuracy:", nn_acc_pkg_multi, "\n")
 
 # Porównanie modeli: Własne vs Pakietowe
 
 results_multiclass <- data.frame(
   Model = rep(c("KNN", "Drzewo Decyzyjne", "Sieć Neuronowa"), 2),
   Podejście = rep(c("Własne", "Pakietowe"), each = 3),
-  Accuracy = c(knn_acc, tree_acc, nn_acc, knn_acc_pkg_multi, tree_acc_pkg_multi, nn_acc_pkg_multi)
+  Accuracy = c(metrics_knn_multi["accuracy"], metrics_tree_multi["accuracy"], metrics_nn_multi["accuracy"],
+               knn_acc_pkg_multi, tree_acc_pkg_multi, nn_acc_pkg_multi)
 )
 
 print(results_multiclass)
 
-# Wykres porównawczy dokładności
 ggplot(results_multiclass, aes(x = Model, y = Accuracy, fill = Podejście)) +
   geom_bar(stat = "identity", position = "dodge", color = "black") +
   ggtitle("Porównanie dokładności modeli wieloklasowych: Własne vs Pakietowe") +
   theme_minimal()
-
-# Opcjonalnie: wyświetlenie macierzy pomyłek dla modeli pakietowych
-cat("KNN Confusion Matrix (pakietowe):\n")
-print(table(Predicted = knn_predictions_pkg_multi, Actual = test_data_pkg_multi$quality))
-cat("Drzewo Decyzyjne Confusion Matrix (pakietowe):\n")
-print(table(Predicted = tree_predictions_pkg_multi, Actual = test_data_pkg_multi$quality))
-cat("Sieć Neuronowa Confusion Matrix (pakietowe):\n")
-print(table(Predicted = nn_predictions_pkg_multi, Actual = test_data_pkg_multi$quality))
-

@@ -264,7 +264,6 @@ predict_knn_classification <- function(model, test_X, k = 10, threshold = 0.5) {
   return(predictions)
 }
 
-
 # --- Drzewo decyzyjne dla klasyfikacji ---
 train_tree_classification <- function(X, y, depth, ...) {
   if (depth == 0 || length(unique(y)) == 1) {
@@ -393,33 +392,42 @@ predict_nn_classification <- function(model, test_X, ...) {
 # Klasyfikacja wieloklasowa
 # ============================================================
 
-#knn
-train_knn_multiclass <- function(train_X, train_y) {
+### KNN MULTICLASS
+
+train_knn_multiclass <- function(train_X, train_y, ...) {
+  # Upewnij się, że etykiety są faktorem
+  train_y <- as.factor(train_y)
   return(list(X = train_X, y = train_y))
 }
 
 predict_knn_multiclass <- function(model, test_X, k = 10) {
   train_X <- as.matrix(model$X)
-  train_y <- model$y
+  train_y <- model$y  # faktor
   test_X <- as.matrix(test_X)
   
   n_test <- nrow(test_X)
-  predictions <- numeric(n_test)
+  predictions <- vector("character", n_test)
   
   for (i in 1:n_test) {
-    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), ncol = ncol(train_X), byrow = TRUE))^2))
-    neighbors <- train_y[order(distances)[1:k]]
-    
-    predictions[i] <- as.integer(names(sort(table(neighbors), decreasing = TRUE)[1]))
+    distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), 
+                                                ncol = ncol(train_X), byrow = TRUE))^2))
+    neighbor_indices <- order(distances)[1:k]
+    neighbors <- train_y[neighbor_indices]
+    majority_class <- names(which.max(table(neighbors)))
+    predictions[i] <- majority_class
   }
   
-  return(predictions)
+  return(factor(predictions, levels = levels(train_y)))
 }
 
-#drzewo
-train_tree_multiclass <- function(X, y, depth) {
+
+### DRZEWO DECYZYJNE MULTICLASS
+
+train_tree_multiclass <- function(X, y, depth, ...) {
+  y <- as.factor(y)
+  # Warunek zatrzymania: głębokość 0 lub wszystkie etykiety takie same
   if (depth == 0 || length(unique(y)) == 1) {
-    return(as.integer(names(sort(table(y), decreasing = TRUE)[1])))
+    return(names(which.max(table(y))))
   }
   
   best_split <- NULL
@@ -430,22 +438,26 @@ train_tree_multiclass <- function(X, y, depth) {
     for (split in unique(X[, feature])) {
       left_indices <- X[, feature] <= split
       right_indices <- X[, feature] > split
+      
+      if (sum(left_indices) == 0 || sum(right_indices) == 0) next
+      
       left <- y[left_indices]
       right <- y[right_indices]
-      
-      if (length(left) == 0 || length(right) == 0) next
-      
-      gini <- sum((table(left) / length(left))^2) + sum((table(right) / length(right))^2)
+      # Gini impurity dla każdego podzbioru:
+      gini_left <- 1 - sum((table(left) / length(left))^2)
+      gini_right <- 1 - sum((table(right) / length(right))^2)
+      gini <- (length(left) / length(y)) * gini_left + (length(right) / length(y)) * gini_right
       
       if (!is.na(gini) && gini < best_gini) {
         best_gini <- gini
-        best_split <- list(feature = feature, value = split, left_indices = left_indices, right_indices = right_indices)
+        best_split <- list(feature = feature, value = split, 
+                           left_indices = left_indices, right_indices = right_indices)
       }
     }
   }
   
   if (is.null(best_split)) {
-    return(as.integer(names(sort(table(y), decreasing = TRUE)[1])))
+    return(names(which.max(table(y))))
   }
   
   left_tree <- train_tree_multiclass(X[best_split$left_indices, , drop = FALSE], y[best_split$left_indices], depth - 1)
@@ -454,8 +466,8 @@ train_tree_multiclass <- function(X, y, depth) {
   return(list(split = best_split, left = left_tree, right = right_tree))
 }
 
-predict_tree_multiclass <- function(tree, X) {
-  predictions <- numeric(nrow(X))
+predict_tree_multiclass <- function(tree, X, ...) {
+  predictions <- vector("character", nrow(X))
   
   for (i in 1:nrow(X)) {
     node <- tree
@@ -469,79 +481,71 @@ predict_tree_multiclass <- function(tree, X) {
     predictions[i] <- node
   }
   
-  return(as.integer(predictions))
+  return(factor(predictions))
 }
 
-#sieć neuronowa
-softmax <- function(x) {
-  exp_x <- exp(x - apply(x, 1, max)) 
-  return(exp_x / rowSums(exp_x))
-}
 
-adam_update <- function(m, v, g, beta1, beta2, t, learning_rate, epsilon = 1e-8) {
-  m <- beta1 * m + (1 - beta1) * g
-  v <- beta2 * v + (1 - beta2) * (g^2)
-  m_hat <- m / (1 - beta1^t)
-  v_hat <- v / (1 - beta2^t)
-  return(-learning_rate * m_hat / (sqrt(v_hat) + epsilon))
-}
+### SIEĆ NEURONOWA MULTICLASS
 
-train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs = 5000, learning_rate = 0.001) {
+train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs = 5000, learning_rate = 0.001, ...) {
   train_X <- as.matrix(train_X)
-  train_y <- as.integer(as.character(train_y))  
+  train_y <- as.factor(train_y)
+  labels <- levels(train_y)
+  train_y_int <- as.integer(train_y)
   
   mean_X <- apply(train_X, 2, mean)
   sd_X <- apply(train_X, 2, sd)
   train_X <- scale(train_X, center = mean_X, scale = sd_X)
   
-  labels <- sort(unique(train_y))
-  y_one_hot <- matrix(0, nrow = length(train_y), ncol = length(labels))
-  for (i in 1:length(train_y)) {
-    y_one_hot[i, which(labels == train_y[i])] <- 1
-  }
-  
   n_features <- ncol(train_X)
   n_samples <- nrow(train_X)
   n_classes <- length(labels)
   
-  w_hidden <- matrix(rnorm(n_features * hidden_neurons, mean = 0, sd = sqrt(1 / n_features)), n_features, hidden_neurons)
+  # One-hot encoding
+  y_one_hot <- matrix(0, nrow = n_samples, ncol = n_classes)
+  for (i in 1:n_samples) {
+    y_one_hot[i, train_y_int[i]] <- 1
+  }
+  
+  # Inicjalizacja wag
+  w_hidden <- matrix(rnorm(n_features * hidden_neurons, mean = 0, sd = sqrt(1/n_features)), n_features, hidden_neurons)
   b_hidden <- rep(0, hidden_neurons)
-  w_output <- matrix(rnorm(hidden_neurons * n_classes, mean = 0, sd = sqrt(1 / hidden_neurons)), hidden_neurons, n_classes)
+  w_output <- matrix(rnorm(hidden_neurons * n_classes, mean = 0, sd = sqrt(1/hidden_neurons)), hidden_neurons, n_classes)
   b_output <- rep(0, n_classes)
   
-  dropout_rate <- 0.2
-  momentum <- 0.9
-  velocity_w_hidden <- matrix(0, n_features, hidden_neurons)
-  velocity_w_output <- matrix(0, hidden_neurons, n_classes)
+  softmax <- function(x) {
+    exp_x <- exp(x - apply(x, 1, max))
+    return(exp_x / rowSums(exp_x))
+  }
   
+  # Trening – prosta implementacja gradient descent
   for (epoch in 1:epochs) {
-    hidden_layer <- train_X %*% w_hidden + matrix(b_hidden, n_samples, hidden_neurons, byrow = TRUE)
-    hidden_layer <- (hidden_layer - mean(hidden_layer)) / (sd(hidden_layer) + 1e-8)
+    # Forward pass
+    hidden_linear <- train_X %*% w_hidden + matrix(b_hidden, n_samples, hidden_neurons, byrow = TRUE)
+    hidden_activation <- tanh(hidden_linear)
     
-    hidden_layer <- ifelse(hidden_layer > 0, hidden_layer, 0.01 * hidden_layer)
+    output_linear <- hidden_activation %*% w_output + matrix(b_output, n_samples, n_classes, byrow = TRUE)
+    output_probs <- softmax(output_linear)
     
-    dropout_mask <- matrix(rbinom(n_samples * hidden_neurons, 1, 1 - dropout_rate), n_samples, hidden_neurons)
-    hidden_layer <- hidden_layer * dropout_mask
-    
-    output_layer <- hidden_layer %*% w_output + matrix(b_output, n_samples, n_classes, byrow = TRUE)
-    output_probs <- softmax(output_layer)
-    
+    # Obliczenie straty (cross-entropy)
     loss <- -sum(y_one_hot * log(output_probs + 1e-8)) / n_samples
     
-    error <- y_one_hot - output_probs
-    d_output <- error
-    d_hidden <- d_output %*% t(w_output) * ifelse(hidden_layer > 0, 1, 0.01)
+    # Backpropagation
+    error <- output_probs - y_one_hot
+    d_w_output <- t(hidden_activation) %*% error / n_samples
+    d_b_output <- colSums(error) / n_samples
     
-    g_w_output <- t(hidden_layer) %*% d_output
-    g_w_hidden <- t(train_X) %*% d_hidden
+    d_hidden <- (error %*% t(w_output)) * (1 - hidden_activation^2)
+    d_w_hidden <- t(train_X) %*% d_hidden / n_samples
+    d_b_hidden <- colSums(d_hidden) / n_samples
     
-    velocity_w_output <- momentum * velocity_w_output + learning_rate * g_w_output
-    velocity_w_hidden <- momentum * velocity_w_hidden + learning_rate * g_w_hidden
+    # Aktualizacja wag
+    w_output <- w_output - learning_rate * d_w_output
+    b_output <- b_output - learning_rate * d_b_output
+    w_hidden <- w_hidden - learning_rate * d_w_hidden
+    b_hidden <- b_hidden - learning_rate * d_b_hidden
     
-    w_output <- w_output + velocity_w_output
-    w_hidden <- w_hidden + velocity_w_hidden
-    
-    if (epoch %% 500 == 0) {
+    if (epoch %% 100 == 0) {
       cat("Epoka:", epoch, "Strata:", loss, "\n")
     }
   }
@@ -554,25 +558,22 @@ train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs =
   ))
 }
 
-predict_nn_multiclass <- function(model, test_X) {
+predict_nn_multiclass <- function(model, test_X, ...) {
   test_X <- as.matrix(test_X)
   test_X <- scale(test_X, center = model$mean_X, scale = model$sd_X)
   
-  test_X[is.na(test_X)] <- 0  
+  hidden_linear <- test_X %*% model$w_hidden + matrix(model$b_hidden, nrow(test_X), length(model$b_hidden), byrow = TRUE)
+  hidden_activation <- tanh(hidden_linear)
   
-  # warstwy ukryte
-  hidden_layer <- test_X %*% model$w_hidden + matrix(model$b_hidden, nrow = nrow(test_X), ncol = length(model$b_hidden), byrow = TRUE)
-  hidden_layer <- (hidden_layer - mean(hidden_layer)) / (sd(hidden_layer) + 1e-8)
-  hidden_layer <- ifelse(hidden_layer > 0, hidden_layer, 0.01 * hidden_layer) 
+  output_linear <- hidden_activation %*% model$w_output + matrix(model$b_output, nrow(test_X), length(model$b_output), byrow = TRUE)
   
-  #warstw. ukryte
-  output_layer <- hidden_layer %*% model$w_output + matrix(rep(model$b_output, nrow(test_X)), nrow = nrow(test_X), byrow = TRUE)
-  output_probs <- softmax(output_layer)
-  
-  # Przypisanie klas
+  softmax <- function(x) {
+    exp_x <- exp(x - apply(x, 1, max))
+    return(exp_x / rowSums(exp_x))
+  }
+  output_probs <- softmax(output_linear)
   predicted_indices <- apply(output_probs, 1, which.max)
-  predictions <- model$labels[predicted_indices]  # Bezpośrednio `labels`
+  predictions <- model$labels[predicted_indices]
   
-  return(as.integer(predictions))
+  return(factor(predictions, levels = model$labels))
 }
-
