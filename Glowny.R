@@ -26,18 +26,205 @@ features <- data[, -ncol(data)]
 features_scaled <- as.data.frame(scale(features))
 data_reg <- cbind(features_scaled, Concrete_Compressive_Strength = target)
 
+set.seed(123)
+
+# Definicja zakresu wartości dla hiperparametru k
+k_values <- seq(3, 15, by = 2)
+
+# Data frame do przechowywania wyników
+results_knn_custom <- data.frame(k = numeric(), rmse = numeric(), r2 = numeric())
+
+# Iteracja po różnych wartościach k
+for (k_val in k_values) {
+  hyperparams_knn_custom <- list(k = k_val, threshold = 0.5)
+  
+  # Przeprowadzenie 10-krotnej CV dla danego ustawienia hiperparametru
+  cv_results <- custom_cv(
+    data = data_reg,
+    k_folds = 5,
+    train_func = train_knn,
+    predict_func = predict_knn,
+    performance_funcs = list(rmse = rmse, r2 = r2_score),
+    hyperparams = hyperparams_knn_custom,
+    target_col = "Concrete_Compressive_Strength",
+    pass_to_predict = TRUE
+  )
+  
+  # Zapisanie wyników
+  results_knn_custom <- rbind(results_knn_custom, 
+                              data.frame(k = k_val,
+                                         rmse = cv_results["rmse"],
+                                         r2 = cv_results["r2"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu k-NN
+print(results_knn_custom)
+
+# Wybór najlepszego modelu na podstawie minimalnego RMSE
+best_knn_model <- results_knn_custom[which.min(results_knn_custom$rmse), ]
+print(best_knn_model)
+
+cat("Najlepsza konfiguracja modelu k-NN (regresja) na podstawie RMSE:\n")
+cat("Liczba najbliższych sąsiadów (k):", best_knn_model$k, "\n")
+cat("RMSE:", best_knn_model$rmse, "\n")
+cat("R^2:", best_knn_model$r2, "\n")
+
+# Wizualizacja zależności RMSE od liczby sąsiadów k
+ggplot(results_knn_custom, aes(x = k, y = rmse)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Własny model k-NN: RMSE w zależności od k") +
+  xlab("Liczba najbliższych sąsiadów (k)") +
+  ylab("RMSE")
+
+# Wizualizacja wyników – zależność R^2 od liczby sąsiadów k
+ggplot(results_tree_custom, aes(x = max_depth, y = r2)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  ggtitle("Własny model k-NN: RMSE w zależności od k") +
+  xlab("Liczba najbliższych sąsiadów (k)") +
+  ylab(expression(R^2))
+
+# Definicja zakresu wartości hiperparametru max_depth
+depth_values <- c(3, 5, 7, 9, 11)
+
+# Data frame do przechowywania wyników
+results_tree_custom <- data.frame(max_depth = numeric(), rmse = numeric(), r2 = numeric())
+
+# Iteracja po różnych wartościach max_depth
+for (depth_val in depth_values) {
+  
+  # Ustawienie hiperparametru dla bieżącej iteracji
+  hyperparams_tree_custom <- list(max_depth = depth_val)
+  
+  # Przeprowadzenie 10-krotnej walidacji krzyżowej dla danego max_depth
+  cv_results_tree <- custom_cv(
+    data = data_reg,
+    k_folds = 5,
+    train_func = train_tree,
+    predict_func = predict_tree,
+    performance_funcs = list(rmse = rmse, r2 = r2_score),
+    hyperparams = hyperparams_tree_custom,
+    target_col = "Concrete_Compressive_Strength",
+    pass_to_predict = FALSE
+  )
+  
+  # Zapisanie wyników do data frame
+  results_tree_custom <- rbind(results_tree_custom,
+                               data.frame(max_depth = depth_val,
+                                          rmse = cv_results_tree["rmse"],
+                                          r2 = cv_results_tree["r2"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu drzewa decyzyjnego
+print(results_tree_custom)
+
+# Wybór najlepszego modelu na podstawie minimalnego RMSE
+best_tree_model <- results_tree_custom[which.min(results_tree_custom$rmse), ]
+print(best_tree_model)
+
+cat("Najlepsza konfiguracja drzewa decyzyjnego (regresja):\n")
+cat("Maksymalna głębokość:", best_tree_model$max_depth, "\n")
+cat("RMSE:", best_tree_model$rmse, "\n")
+cat("R^2:", best_tree_model$r2, "\n")
+
+# Wizualizacja wyników – zależność RMSE od max_depth
+ggplot(results_tree_custom, aes(x = max_depth, y = rmse)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Własny model drzewa decyzyjnego: RMSE w zależności od max_depth") +
+  xlab("Maksymalna głębokość drzewa (max_depth)") +
+  ylab("RMSE")
+
+# Wizualizacja wyników – zależność R^2 od max_depth
+ggplot(results_tree_custom, aes(x = max_depth, y = r2)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  ggtitle("Własny model drzewa decyzyjnego: R^2 w zależności od max_depth") +
+  xlab("Maksymalna głębokość drzewa (max_depth)") +
+  ylab(expression(R^2))
+
+# Definicja siatki hiperparametrów dla sieci neuronowej
+nn_grid <- expand.grid(hidden_neurons = c(10, 30, 50, 70, 100),
+                       learning_rate = c(0.0001, 0.001, 0.01))
+
+# Data frame do przechowywania wyników tuningu
+results_nn_custom <- data.frame(hidden_neurons = numeric(),
+                                learning_rate = numeric(),
+                                rmse = numeric(),
+                                r2 = numeric())
+
+# Iteracja po każdej kombinacji hiperparametrów
+for (i in 1:nrow(nn_grid)) {
+  h_neurons <- nn_grid$hidden_neurons[i]
+  lr <- nn_grid$learning_rate[i]
+  
+  # Ustawienie hiperparametrów dla bieżącej iteracji
+  hyperparams_nn_custom <- list(hidden_neurons = h_neurons,
+                                epochs = 2000,
+                                learning_rate = lr)
+  
+  # Przeprowadzenie 10-krotnej walidacji krzyżowej
+  cv_results_nn <- custom_cv(
+    data = data_reg,
+    k_folds = 5,
+    train_func = train_nn,
+    predict_func = predict_nn,
+    performance_funcs = list(rmse = rmse, r2 = r2_score),
+    hyperparams = hyperparams_nn_custom,
+    target_col = "Concrete_Compressive_Strength",
+    pass_to_predict = FALSE
+  )
+  
+  # Zapisanie wyników
+  results_nn_custom <- rbind(results_nn_custom,
+                             data.frame(hidden_neurons = h_neurons,
+                                        learning_rate = lr,
+                                        rmse = cv_results_nn["rmse"],
+                                        r2 = cv_results_nn["r2"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu sieci neuronowej
+print(results_nn_custom)
+
+# Wybór najlepszego modelu na podstawie minimalnego RMSE
+best_nn_model <- results_nn_custom[which.min(results_nn_custom$rmse), ]
+print(best_nn_model)
+
+cat("Najlepsza konfiguracja sieci neuronowej:\n")
+cat("Liczba neuronów:", best_nn_model$hidden_neurons, "\n")
+cat("Learning rate:", best_nn_model$learning_rate, "\n")
+cat("RMSE:", best_nn_model$rmse, "\n")
+cat("R^2:", best_nn_model$r2, "\n")
+
+
+# Wizualizacja wyników – RMSE w zależności od liczby neuronów i współczynnika uczenia
+ggplot(results_nn_custom, aes(x = factor(hidden_neurons), y = rmse, fill = factor(learning_rate))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  ggtitle("Własny model sieci neuronowej: RMSE") +
+  xlab("Liczba neuronów (hidden_neurons)") +
+  ylab("RMSE") +
+  labs(fill = "Learning Rate")
+
+# Wizualizacja wyników – R^2 w zależności od liczby neuronów i współczynnika uczenia
+ggplot(results_nn_custom, aes(x = factor(hidden_neurons), y = r2, fill = factor(learning_rate))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  ggtitle("Własny model sieci neuronowej: R^2") +
+  xlab("Liczba neuronów (hidden_neurons)") +
+  ylab(expression(R^2)) +
+  labs(fill = "Learning Rate")
+
+
 # Definicja hiperparametrów jako listy
-hyperparams_knn <- list(k = 10)
+hyperparams_knn <- list(k = 5)
 hyperparams_tree <- list(max_depth = 5)
 hyperparams_nn   <- list(hidden_neurons = 50, epochs = 2000, learning_rate = 0.0001)
-
-set.seed(123)
 
 # Ocena własnych modeli przy użyciu własnej walidacji krzyżowej (10-krotne CV)
 # Dla KNN chcemy przekazać hiperparametr do funkcji predykcyjnej, dlatego pass_to_predict = TRUE
 metrics_knn <- custom_cv(
   data = data_reg,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_knn,
   predict_func = predict_knn,
   performance_funcs = list(rmse = rmse, r2 = r2_score),
@@ -49,7 +236,7 @@ metrics_knn <- custom_cv(
 # Dla drzewa decyzyjnego i sieci neuronowej nie przekazujemy hiperparametrów do funkcji predykcyjnej
 metrics_tree <- custom_cv(
   data = data_reg,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_tree,
   predict_func = predict_tree,
   performance_funcs = list(rmse = rmse, r2 = r2_score),
@@ -60,7 +247,7 @@ metrics_tree <- custom_cv(
 
 metrics_nn <- custom_cv(
   data = data_reg,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_nn,
   predict_func = predict_nn,
   performance_funcs = list(rmse = rmse, r2 = r2_score),
@@ -75,13 +262,13 @@ cat("Drzewo RMSE:", metrics_tree["rmse"], "R^2:", metrics_tree["r2"], "\n")
 cat("Sieć Neuronowa RMSE:", metrics_nn["rmse"], "R^2:", metrics_nn["r2"], "\n")
 
 # Porównanie z modelami z pakietów
-ctrl <- trainControl(method = "cv", number = 10)
+ctrl <- trainControl(method = "cv", number = 5)
 
 # Model KNN przy użyciu caret
 knn_model_caret <- train(Concrete_Compressive_Strength ~ ., 
                          data = data_reg, 
                          method = "knn", 
-                         tuneGrid = data.frame(k = 10),
+                         tuneGrid = data.frame(k = 5),
                          trControl = ctrl)
 caret_knn_rmse <- min(knn_model_caret$results$RMSE)
 caret_knn_r2   <- min(knn_model_caret$results$Rsquared)
@@ -95,8 +282,6 @@ tree_model_caret <- train(Concrete_Compressive_Strength ~ .,
                           control = rpart.control(maxdepth = 5))
 caret_tree_rmse <- min(tree_model_caret$results$RMSE)
 caret_tree_r2   <- max(tree_model_caret$results$Rsquared)
-
-ctrl <- trainControl(method = "cv", number = 10)
 
 # Model sieci neuronowej przy użyciu nnet
 nn_model_caret <- train(Concrete_Compressive_Strength ~ ., 
@@ -179,17 +364,170 @@ names(data_cls_factor) <- make.names(names(data_cls_factor))
 cat("Rozkład klas w danych (wszystkie):\n")
 print(table(data_cls_factor$y))
 
+# Definicja zakresu wartości hiperparametru k
+k_values <- c(3, 5, 7, 9, 11)
+
+# Data frame do przechowywania wyników
+results_knn_cls_custom <- data.frame(k = numeric(), accuracy = numeric())
+
+# Iteracja po wartościach k
+for (k_val in k_values) {
+  hyperparams_knn_cls_custom <- list(k = k_val, threshold = 0.5)
+  
+  # Przeprowadzenie 10-krotnej walidacji krzyżowej dla danego k
+  cv_results_knn_cls <- custom_cv(
+    data = data_cls_numeric,
+    k_folds = 5,
+    train_func = train_knn_classification,
+    predict_func = predict_knn_classification,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_knn_cls_custom,
+    target_col = "y",
+    pass_to_predict = TRUE
+  )
+  
+  # Zapisanie wyniku (Accuracy) dla danego k
+  results_knn_cls_custom <- rbind(results_knn_cls_custom,
+                                  data.frame(k = k_val,
+                                             accuracy = cv_results_knn_cls["accuracy"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu k-NN
+print(results_knn_cls_custom)
+
+# Wybór najlepszego modelu – wiersza z maksymalnym accuracy
+best_knn_model <- results_knn_cls_custom[which.max(results_knn_cls_custom$accuracy), ]
+print(best_knn_model)
+
+cat("Najlepsza konfiguracja dla modelu k-NN (klasyfikacja binarna):\n")
+cat("Liczba najbliższych sąsiadów (k):", best_knn_model$k, "\n") # k = 11
+cat("Osiągnięta Accuracy:", best_knn_model$accuracy, "\n")
+
+# Wizualizacja wyników – Accuracy w zależności od liczby sąsiadów k
+ggplot(results_knn_cls_custom, aes(x = k, y = accuracy)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Własny model k-NN (klasyfikacja binarna): Accuracy vs. k") +
+  xlab("Liczba najbliższych sąsiadów (k)") +
+  ylab("Accuracy")
+
+# Definicja zakresu wartości dla hiperparametru depth
+depth_values <- c(3, 5, 7, 9, 11)
+
+# Data frame do przechowywania wyników
+results_tree_cls_custom <- data.frame(depth = numeric(), accuracy = numeric())
+
+# Iteracja po różnych wartościach depth
+for (d in depth_values) {
+  hyperparams_tree_cls_custom <- list(depth = d)
+  
+  # Przeprowadzenie 10-krotnej walidacji krzyżowej dla danego depth
+  cv_results_tree_cls <- custom_cv(
+    data = data_cls_numeric,
+    k_folds = 5,
+    train_func = train_tree_classification,
+    predict_func = predict_tree_classification,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_tree_cls_custom,
+    target_col = "y",
+    pass_to_predict = FALSE
+  )
+  
+  # Zapisanie wyniku (Accuracy) dla danego depth
+  results_tree_cls_custom <- rbind(results_tree_cls_custom,
+                                   data.frame(depth = d,
+                                              accuracy = cv_results_tree_cls["accuracy"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu drzewa
+print(results_tree_cls_custom)
+
+# Wybór najlepszego modelu – wiersza z maksymalnym accuracy
+best_tree_model <- results_tree_cls_custom[which.max(results_tree_cls_custom$accuracy), ]
+print(best_tree_model)
+
+cat("Najlepsza konfiguracja drzewa decyzyjnego (klasyfikacja binarna):\n")
+cat("Maksymalna głębokość:", best_tree_model$depth, "\n") # depth = 3
+cat("Osiągnięty Accuracy:", best_tree_model$accuracy, "\n")
+
+
+# Wizualizacja wyników – Accuracy w zależności od głębokości drzewa
+ggplot(results_tree_cls_custom, aes(x = depth, y = accuracy)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  ggtitle("Własny model drzewa decyzyjnego (klasyfikacja binarna): Accuracy vs. Depth") +
+  xlab("Maksymalna głębokość drzewa (depth)") +
+  ylab("Accuracy")
+
+# Definicja siatki hiperparametrów dla sieci neuronowej
+nn_grid <- expand.grid(hidden_neurons = c(10, 30, 50, 70, 100),
+                       learning_rate = c(0.0005, 0.001, 0.005))
+
+# Data frame do przechowywania wyników
+results_nn_cls_custom <- data.frame(hidden_neurons = numeric(),
+                                    learning_rate = numeric(),
+                                    accuracy = numeric())
+
+# Iteracja po każdej kombinacji hiperparametrów
+for (i in 1:nrow(nn_grid)) {
+  h_neurons <- nn_grid$hidden_neurons[i]
+  lr <- nn_grid$learning_rate[i]
+  
+  hyperparams_nn_cls_custom <- list(hidden_neurons = h_neurons,
+                                    epochs = 2000,
+                                    learning_rate = lr)
+  
+  # Przeprowadzenie 10-krotnej walidacji krzyżowej dla danej kombinacji hiperparametrów
+  cv_results_nn_cls <- custom_cv(
+    data = data_cls_numeric,
+    k_folds = 5,
+    train_func = train_nn_classification,
+    predict_func = predict_nn_classification,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_nn_cls_custom,
+    target_col = "y",
+    pass_to_predict = FALSE
+  )
+  
+  # Zapisanie wyniku (Accuracy) dla danej kombinacji
+  results_nn_cls_custom <- rbind(results_nn_cls_custom,
+                                 data.frame(hidden_neurons = h_neurons,
+                                            learning_rate = lr,
+                                            accuracy = cv_results_nn_cls["accuracy"]))
+}
+
+# Wyświetlenie wyników tuningu dla własnego modelu sieci neuronowej
+print(results_nn_cls_custom)
+
+# Wybór najlepszego modelu – wiersza z maksymalnym accuracy
+best_model <- results_nn_cls_custom[which.max(results_nn_cls_custom$accuracy), ]
+print(best_model)
+
+# Możesz też wyświetlić komunikat z najlepszą konfiguracją:
+cat("Najlepsza konfiguracja sieci neuronowej:\n")
+cat("Liczba neuronów:", best_model$hidden_neurons, "\n") # 70
+cat("Learning rate:", best_model$learning_rate, "\n") # 0.0005
+cat("Osiągnięty Accuracy:", best_model$accuracy, "\n")
+
+# Wizualizacja wyników – Accuracy w zależności od liczby neuronów i współczynnika uczenia
+ggplot(results_nn_cls_custom, aes(x = factor(hidden_neurons), y = accuracy, fill = factor(learning_rate))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  ggtitle("Własny model sieci neuronowej (klasyfikacja binarna): Accuracy") +
+  xlab("Liczba neuronów w warstwie ukrytej") +
+  ylab("Accuracy") +
+  labs(fill = "Learning Rate")
+
 # Definicja hiperparametrów dla modeli klasyfikacyjnych
 hyperparams_knn_cls <- list(k = 10, threshold = 0.5)
 hyperparams_tree_cls <- list(depth = 5)
-hyperparams_nn_cls   <- list(hidden_neurons = 50, epochs = 2000, learning_rate = 0.0005)
+hyperparams_nn_cls   <- list(hidden_neurons = 70, epochs = 2000, learning_rate = 0.0005)
 
 set.seed(123)
 
 # Użycie funkcji custom_cv_multi dla własnych modeli klasyfikacyjnych
 metrics_knn_cls <- custom_cv(
   data = data_cls_numeric,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_knn_classification,
   predict_func = predict_knn_classification,
   performance_funcs = list(accuracy = accuracy),
@@ -200,7 +538,7 @@ metrics_knn_cls <- custom_cv(
 
 metrics_tree_cls <- custom_cv(
   data = data_cls_numeric,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_tree_classification,
   predict_func = predict_tree_classification,
   performance_funcs = list(accuracy = accuracy),
@@ -211,7 +549,7 @@ metrics_tree_cls <- custom_cv(
 
 metrics_nn_cls <- custom_cv(
   data = data_cls_numeric,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_nn_classification,
   predict_func = predict_nn_classification,
   performance_funcs = list(accuracy = accuracy),
@@ -238,8 +576,8 @@ print(table(test_data_cls$y))
 
 # 6. Ustawienia kontrolne dla modeli pakietowych (caret)
 # Użyjemy stratygowanych foldów – funkcja createFolds gwarantuje, że w każdym foldzie będą obie klasy.
-folds <- createFolds(train_data_cls$y, k = 10)
-ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE, index = folds)
+folds <- createFolds(train_data_cls$y, k = 5)
+ctrl <- trainControl(method = "cv", number = 5, classProbs = TRUE, index = folds)
 lapply(folds, function(idx) table(train_data_cls$y[idx]))
 
 
@@ -360,19 +698,167 @@ features_scaled <- as.data.frame(scale(features))
 
 data_multi <- cbind(features_scaled, quality = target)
 
+# Analiza hiperparametrów dla modeli wieloklasowych
+
+# Założenie: Dane zostały przygotowane w obiekcie data_multi,
+# gdzie:
+# - cechy zostały znormalizowane (features_scaled)
+# - kolumna target to "quality" (liczba jakości wina)
+# - zmienna quality w data_multi pozostaje numeryczna – przy wywołaniu custom_cv
+#   nasze funkcje (train_knn_multiclass, train_tree_multiclass, train_nn_multiclass)
+#   operują na danych numerycznych, a ocena Accuracy odbywa się na podstawie oryginalnych wartości.
+#
+# Upewnij się, że w pliku funkcje.R masz zdefiniowane:
+#   - custom_cv
+#   - train_knn_multiclass, predict_knn_multiclass
+#   - train_tree_multiclass, predict_tree_multiclass
+#   - train_nn_multiclass, predict_nn_multiclass
+#   - accuracy (funkcja oceniająca Accuracy)
+#
+# W poniższych przykładach przyjmujemy 5-krotną walidację krzyżową.
+
+### 1. Tuning dla własnego modelu k-NN (klasyfikacja wieloklasowa)
+knn_k_values <- c(3, 5, 7, 9, 11)
+results_knn_multi_custom <- data.frame(k = numeric(), accuracy = numeric())
+
+for (k_val in knn_k_values) {
+  hyperparams_knn_multi_custom <- list(k = k_val)
+  
+  cv_results_knn_multi <- custom_cv(
+    data = data_multi,
+    k_folds = 5,
+    train_func = train_knn_multiclass,
+    predict_func = predict_knn_multiclass,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_knn_multi_custom,
+    target_col = "quality",
+    pass_to_predict = TRUE
+  )
+  
+  results_knn_multi_custom <- rbind(results_knn_multi_custom,
+                                    data.frame(k = k_val,
+                                               accuracy = cv_results_knn_multi["accuracy"]))
+}
+
+print(results_knn_multi_custom)
+
+# Wybór najlepszego modelu k-NN
+best_knn_multi <- results_knn_multi_custom[which.max(results_knn_multi_custom$accuracy), ]
+cat("Najlepsza konfiguracja k-NN:\n")
+cat("Liczba najbliższych sąsiadów (k):", best_knn_multi$k, "\n") # k = 11
+cat("Osiągnięta Accuracy:", best_knn_multi$accuracy, "\n\n")
+
+
+# Wizualizacja wyników dla k-NN
+ggplot(results_knn_multi_custom, aes(x = k, y = accuracy)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Własny model k-NN (klasyfikacja wieloklasowa): Accuracy vs. k") +
+  xlab("Liczba najbliższych sąsiadów (k)") +
+  ylab("Accuracy")
+
+### 2. Tuning dla własnego modelu drzewa decyzyjnego (klasyfikacja wieloklasowa)
+depth_values <- c(3, 5, 7, 9, 11)
+results_tree_multi_custom <- data.frame(depth = numeric(), accuracy = numeric())
+
+for (d in depth_values) {
+  hyperparams_tree_multi_custom <- list(depth = d)
+  
+  cv_results_tree_multi <- custom_cv(
+    data = data_multi,
+    k_folds = 5,
+    train_func = train_tree_multiclass,
+    predict_func = predict_tree_multiclass,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_tree_multi_custom,
+    target_col = "quality",
+    pass_to_predict = FALSE
+  )
+  
+  results_tree_multi_custom <- rbind(results_tree_multi_custom,
+                                     data.frame(depth = d,
+                                                accuracy = cv_results_tree_multi["accuracy"]))
+}
+
+print(results_tree_multi_custom)
+
+# Wybór najlepszego modelu drzewa
+best_tree_multi <- results_tree_multi_custom[which.max(results_tree_multi_custom$accuracy), ]
+cat("Najlepsza konfiguracja drzewa decyzyjnego:\n")
+cat("Głębokość drzewa (depth):", best_tree_multi$depth, "\n") # depth = 5
+cat("Osiągnięta Accuracy:", best_tree_multi$accuracy, "\n\n")
+
+# Wizualizacja wyników dla drzewa
+ggplot(results_tree_multi_custom, aes(x = depth, y = accuracy)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  ggtitle("Własny model drzewa decyzyjnego (klasyfikacja wieloklasowa): Accuracy vs. Depth") +
+  xlab("Głębokość drzewa (depth)") +
+  ylab("Accuracy")
+
+### 3. Tuning dla własnego modelu sieci neuronowej (klasyfikacja wieloklasowa)
+nn_grid_multi <- expand.grid(hidden_neurons = c(50, 75, 100, 125),
+                             learning_rate = c(0.0001, 0.0005, 0.001))
+results_nn_multi_custom <- data.frame(hidden_neurons = numeric(),
+                                      learning_rate = numeric(),
+                                      accuracy = numeric())
+
+for (i in 1:nrow(nn_grid_multi)) {
+  h_neurons <- nn_grid_multi$hidden_neurons[i]
+  lr <- nn_grid_multi$learning_rate[i]
+  
+  hyperparams_nn_multi_custom <- list(hidden_neurons = h_neurons,
+                                      epochs = 2000,
+                                      learning_rate = lr)
+  
+  cv_results_nn_multi <- custom_cv(
+    data = data_multi,
+    k_folds = 5,
+    train_func = train_nn_multiclass,
+    predict_func = predict_nn_multiclass,
+    performance_funcs = list(accuracy = accuracy),
+    hyperparams = hyperparams_nn_multi_custom,
+    target_col = "quality",
+    pass_to_predict = FALSE
+  )
+  
+  results_nn_multi_custom <- rbind(results_nn_multi_custom,
+                                   data.frame(hidden_neurons = h_neurons,
+                                              learning_rate = lr,
+                                              accuracy = cv_results_nn_multi["accuracy"]))
+}
+
+print(results_nn_multi_custom)
+
+# Wybór najlepszego modelu sieci neuronowej
+best_nn_multi <- results_nn_multi_custom[which.max(results_nn_multi_custom$accuracy), ]
+cat("Najlepsza konfiguracja sieci neuronowej:\n")
+cat("Liczba neuronów:", best_nn_multi$hidden_neurons, "\n") # 100 neuronów
+cat("Learning rate:", best_nn_multi$learning_rate, "\n") # 0.001 learning rate
+cat("Osiągnięta Accuracy:", best_nn_multi$accuracy, "\n")
+
+# Wizualizacja wyników dla sieci neuronowej
+ggplot(results_nn_multi_custom, aes(x = factor(hidden_neurons), y = accuracy, fill = factor(learning_rate))) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  ggtitle("Własny model sieci neuronowej (klasyfikacja wieloklasowa): Accuracy") +
+  xlab("Liczba neuronów w warstwie ukrytej") +
+  ylab("Accuracy") +
+  labs(fill = "Learning Rate")
+
+
 # Parametry modeli
-k <- 5  # l. sąsiadów dla KNN
-max_depth <- 10  # max głębokość drzewa
+k <- 11  # l. sąsiadów dla KNN
+max_depth <- 5  # max głębokość drzewa
 hidden_neurons <- 100  # l. neuronów ukrytych
-epochs <- 5000  # l. epok dla sieci neuronowej
-learning_rate <- 0.0001 # wsp. uczenia
+epochs <- 2000  # l. epok dla sieci neuronowej
+learning_rate <- 0.001 # wsp. uczenia
 
 set.seed(123)
 
 # Modele własne
 metrics_knn_multi <- custom_cv(
   data = data_multi,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_knn_multiclass,
   predict_func = predict_knn_multiclass,
   performance_funcs = list(accuracy = accuracy),
@@ -383,7 +869,7 @@ metrics_knn_multi <- custom_cv(
 
 metrics_tree_multi <- custom_cv(
   data = data_multi,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_tree_multiclass,
   predict_func = predict_tree_multiclass,
   performance_funcs = list(accuracy = accuracy),
@@ -394,7 +880,7 @@ metrics_tree_multi <- custom_cv(
 
 metrics_nn_multi <- custom_cv(
   data = data_multi,
-  k_folds = 10,
+  k_folds = 5,
   train_func = train_nn_multiclass,
   predict_func = predict_nn_multiclass,
   performance_funcs = list(accuracy = accuracy),
@@ -420,7 +906,7 @@ levels(train_data_pkg_multi$quality) <- make.names(levels(train_data_pkg_multi$q
 levels(test_data_pkg_multi$quality)  <- make.names(levels(test_data_pkg_multi$quality))
 
 # Ustawienia kontrolne dla caret – 10-krotna CV
-ctrl <- trainControl(method = "cv", number = 10)
+ctrl <- trainControl(method = "cv", number = 5)
 
 # Model KNN przy użyciu caret
 knn_model_pkg_multi <- train(quality ~ ., 

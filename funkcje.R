@@ -487,7 +487,7 @@ predict_tree_multiclass <- function(tree, X, ...) {
 
 ### SIEĆ NEURONOWA MULTICLASS
 
-train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs = 5000, learning_rate = 0.001, ...) {
+train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs = 2000, learning_rate = 0.001, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.factor(train_y)
   labels <- levels(train_y)
