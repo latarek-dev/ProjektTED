@@ -7,14 +7,14 @@ library(rpart)
 library(caret)
 library(nnet)
 library(gridExtra)
+library(reshape2)
 
 # ============================================================
-# Regresja
+# Problem Regresja
 # ============================================================
 
 source("funkcje.R")
 
-# Wczytanie danych
 data <- read_excel("Concrete_Data.xls")
 colnames(data) <- c("Cement", "Blast_Furnace_Slag", "Fly_Ash", "Water", 
                     "Superplasticizer", "Coarse_Aggregate", "Fine_Aggregate", 
@@ -31,14 +31,13 @@ set.seed(123)
 # Definicja zakresu wartości dla hiperparametru k
 k_values <- seq(3, 15, by = 2)
 
-# Data frame do przechowywania wyników
 results_knn_custom <- data.frame(k = numeric(), rmse = numeric(), r2 = numeric())
 
 # Iteracja po różnych wartościach k
 for (k_val in k_values) {
   hyperparams_knn_custom <- list(k = k_val, threshold = 0.5)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results <- custom_cv(
     data = data_reg,
     k_folds = 5,
@@ -57,7 +56,6 @@ for (k_val in k_values) {
                                          r2 = cv_results$test$r2$mean))
 }
 
-# Wyświetlenie wyników tuningu dla własnego modelu k-NN
 print(results_knn_custom)
 
 # Wybór najlepszego modelu na podstawie minimalnego RMSE
@@ -89,14 +87,13 @@ ggplot(results_knn_custom, aes(x = k, y = r2)) +
 # Definicja zakresu wartości dla hiperparametru max_depth
 depth_values <- c(3, 5, 7, 9, 11)
 
-# Data frame do przechowywania wyników
 results_tree_custom <- data.frame(max_depth = numeric(), rmse = numeric(), r2 = numeric())
 
 # Iteracja po różnych wartościach max_depth
 for (depth_val in depth_values) {
   hyperparams_tree_custom <- list(max_depth = depth_val)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results_tree <- custom_cv(
     data = data_reg,
     k_folds = 5,
@@ -115,7 +112,6 @@ for (depth_val in depth_values) {
                                           r2 = cv_results_tree$test$r2$mean))
 }
 
-# Wyświetlenie wyników tuningu dla własnego modelu drzewa decyzyjnego
 print(results_tree_custom)
 
 # Wybór najlepszego modelu na podstawie minimalnego RMSE
@@ -148,7 +144,6 @@ ggplot(results_tree_custom, aes(x = max_depth, y = r2)) +
 nn_grid <- expand.grid(hidden_neurons = c(10, 30, 50, 70, 100),
                        learning_rate = c(0.0001, 0.001, 0.01))
 
-# Data frame do przechowywania wyników
 results_nn_custom <- data.frame(hidden_neurons = numeric(),
                                 learning_rate = numeric(),
                                 rmse = numeric(),
@@ -163,7 +158,7 @@ for (i in 1:nrow(nn_grid)) {
                                 epochs = 2000,
                                 learning_rate = lr)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results_nn <- custom_cv(
     data = data_reg,
     k_folds = 5,
@@ -183,7 +178,6 @@ for (i in 1:nrow(nn_grid)) {
                                         r2 = cv_results_nn$test$r2$mean))
 }
 
-# Wyświetlenie wyników tuningu dla własnego modelu sieci neuronowej
 print(results_nn_custom)
 
 # Wybór najlepszego modelu na podstawie minimalnego RMSE
@@ -213,13 +207,10 @@ ggplot(results_nn_custom, aes(x = factor(hidden_neurons), y = r2, fill = factor(
   labs(fill = "Learning Rate")
 
 
-# Definicja hiperparametrów jako listy
 hyperparams_knn <- list(k = best_knn_model$k)
 hyperparams_tree <- list(max_depth = best_tree_model$max_depth)
 hyperparams_nn   <- list(hidden_neurons = best_nn_model$hidden_neurons, epochs = 2000, learning_rate = best_nn_model$learning_rate)
 
-# Ocena własnych modeli przy użyciu własnej walidacji krzyżowej (10-krotne CV)
-# Dla KNN chcemy przekazać hiperparametr do funkcji predykcyjnej, dlatego pass_to_predict = TRUE
 metrics_knn <- custom_cv(
   data = data_reg,
   k_folds = 5,
@@ -231,7 +222,6 @@ metrics_knn <- custom_cv(
   pass_to_predict = TRUE
 )
 
-# Dla drzewa decyzyjnego i sieci neuronowej nie przekazujemy hiperparametrów do funkcji predykcyjnej
 metrics_tree <- custom_cv(
   data = data_reg,
   k_folds = 5,
@@ -330,7 +320,7 @@ nn_model_caret <- train(Concrete_Compressive_Strength ~ .,
                         maxit = hyperparams_nn$epochs,
                         linout = TRUE,
                         trace = FALSE,
-                        MaxNWts = 2000)  # trace=FALSE, żeby nie "zaśmiecać" konsoli
+                        MaxNWts = 2000)
 caret_nn_rmse <- min(nn_model_caret$results$RMSE)
 caret_nn_r2   <- max(nn_model_caret$results$Rsquared)
 
@@ -338,10 +328,6 @@ cat("\nWyniki modeli pakietowych:\n")
 cat("Caret KNN RMSE:", caret_knn_rmse, "R^2:", caret_knn_r2, "\n")
 cat("Caret Drzewo RMSE:", caret_tree_rmse, "R^2:", caret_tree_r2, "\n")
 cat("Caret Sieć NN RMSE:", caret_nn_rmse, "R^2:", caret_nn_r2, "\n")
-
-# Załóżmy, że masz wyniki CV dla własnych modeli zapisane w obiektach:
-# metrics_knn, metrics_tree, metrics_nn (dla regresji lub analogicznie dla klasyfikacji)
-# oraz wyniki modeli pakietowych: caret_knn_rmse, caret_knn_r2, caret_tree_rmse, caret_tree_r2, caret_nn_rmse, caret_nn_r2
 
 results_comparison_cv <- data.frame(
   Model = rep(c("KNN", "Drzewo Decyzyjne", "Sieć Neuronowa"), 2),
@@ -370,38 +356,29 @@ ggplot(results_comparison_cv, aes(x = Model, y = R2, fill = Podejście)) +
 # Problem Klasyfikacji binarnej
 # ============================================================
 
-source("funkcje.R")  # Upewnij się, że powyższe funkcje są w pliku funkcje.R
+source("funkcje.R")
 
-# Wczytanie danych
 data <- read.csv("bank.csv", sep = ";")
 
-# Konwersja zmiennej celu na 0/1 (na razie numerycznie)
 data$y <- ifelse(data$y == "yes", 1, 0)
 
-# Lista zmiennych kategorycznych
 categorical_cols <- c("job", "marital", "education", "default", "housing", "loan", "contact", "month", "poutcome")
 for (col in categorical_cols) {
   data[[col]] <- as.factor(data[[col]])
 }
 
-# One-hot encoding – tworzymy macierz cech (bez interceptu)
 encoded_data <- model.matrix(y ~ . - 1, data = data)
 encoded_data <- as.data.frame(encoded_data)
-# Dołączamy oryginalną zmienną celu (numeryczną 0/1)
 encoded_data$y <- data$y
 
-# Przygotowanie danych dla własnych modeli (numeryczne y)
 features_scaled <- as.data.frame(scale(encoded_data[, -ncol(encoded_data)]))
 target <- encoded_data$y
 data_cls_numeric <- cbind(features_scaled, y = target)
-# Sprawdź, że y jest numeryczne
-str(data_cls_numeric$y)  # Powinno pokazać 'num [1:...]'
+str(data_cls_numeric$y)
 
-# Przygotowanie danych dla modeli pakietowych (factor y)
-# Możesz skopiować dane z wersji numerycznej, a następnie przekonwertować y na factor.
 data_cls_factor <- data_cls_numeric
 data_cls_factor$y <- as.factor(data_cls_factor$y)
-levels(data_cls_factor$y) <- c("X0", "X1")  # Poziomy zaczynają się od litery, co jest wymagane przez caret
+levels(data_cls_factor$y) <- c("X0", "X1")
 
 names(data_cls_factor) <- make.names(names(data_cls_factor))
 
@@ -411,14 +388,13 @@ print(table(data_cls_factor$y))
 # Definicja zakresu wartości dla hiperparametru k
 k_values <- c(3, 5, 7, 9, 11)
 
-# Data frame do przechowywania wyników
 results_knn_cls_custom <- data.frame(k = numeric(), accuracy = numeric())
 
 # Iteracja po różnych wartościach k
 for (k_val in k_values) {
   hyperparams_knn_cls_custom <- list(k = k_val, threshold = 0.5)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results_knn_cls <- custom_cv(
     data = data_cls_numeric,
     k_folds = 5,
@@ -458,14 +434,13 @@ ggplot(results_knn_cls_custom, aes(x = k, y = accuracy)) +
 # Definicja zakresu wartości dla hiperparametru depth
 depth_values <- c(3, 5, 7, 9, 11)
 
-# Data frame do przechowywania wyników
 results_tree_cls_custom <- data.frame(depth = numeric(), accuracy = numeric())
 
 # Iteracja po różnych wartościach depth
 for (d in depth_values) {
   hyperparams_tree_cls_custom <- list(depth = d)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results_tree_cls <- custom_cv(
     data = data_cls_numeric,
     k_folds = 5,
@@ -505,7 +480,6 @@ ggplot(results_tree_cls_custom, aes(x = depth, y = accuracy)) +
 nn_grid <- expand.grid(hidden_neurons = c(10, 30, 50, 70, 100),
                        learning_rate = c(0.0005, 0.001, 0.005))
 
-# Data frame do przechowywania wyników
 results_nn_cls_custom <- data.frame(hidden_neurons = numeric(),
                                     learning_rate = numeric(),
                                     accuracy = numeric())
@@ -519,7 +493,7 @@ for (i in 1:nrow(nn_grid)) {
                                     epochs = 2000,
                                     learning_rate = lr)
   
-  # Przeprowadzenie 5-krotnej CV przy użyciu rozszerzonej funkcji custom_cv
+  # Przeprowadzenie 5-krotnej CV
   cv_results_nn_cls <- custom_cv(
     data = data_cls_numeric,
     k_folds = 5,
@@ -557,20 +531,18 @@ ggplot(results_nn_cls_custom, aes(x = factor(hidden_neurons), y = accuracy, fill
   labs(fill = "Learning Rate")
 
 
-# Definicja hiperparametrów dla modeli klasyfikacyjnych
 hyperparams_knn_cls <- list(k = best_knn_model$k, threshold = 0.5)
 hyperparams_tree_cls <- list(depth = best_tree_model$depth)
 hyperparams_nn_cls   <- list(hidden_neurons = best_nn_model$hidden_neurons, epochs = 2000, learning_rate = best_nn_model$learning_rate)
 
 set.seed(123)
 
-# Użycie funkcji custom_cv_multi dla własnych modeli klasyfikacyjnych
 metrics_knn_cls <- custom_cv(
   data = data_cls_numeric,
   k_folds = 5,
   train_func = train_knn_classification,
   predict_func = predict_knn_classification,
-  performance_funcs = list(accuracy = accuracy),
+  performance_funcs = list(accuracy = accuracy, precision = precision, recall = recall, f1 = f1_score),
   hyperparams = hyperparams_knn_cls,
   target_col = "y",
   pass_to_predict = TRUE
@@ -581,7 +553,7 @@ metrics_tree_cls <- custom_cv(
   k_folds = 5,
   train_func = train_tree_classification,
   predict_func = predict_tree_classification,
-  performance_funcs = list(accuracy = accuracy),
+  performance_funcs = list(accuracy = accuracy, precision = precision, recall = recall, f1 = f1_score),
   hyperparams = hyperparams_tree_cls,
   target_col = "y",
   pass_to_predict = FALSE
@@ -592,7 +564,7 @@ metrics_nn_cls <- custom_cv(
   k_folds = 5,
   train_func = train_nn_classification,
   predict_func = predict_nn_classification,
-  performance_funcs = list(accuracy = accuracy),
+  performance_funcs = list(accuracy = accuracy, precision = precision, recall = recall, f1 = f1_score),
   hyperparams = hyperparams_nn_cls,
   target_col = "y",
   pass_to_predict = FALSE
@@ -604,34 +576,61 @@ cat("----------------------------------------------------\n")
 # Wyniki dla modelu k-NN
 cat("Model k-NN:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_knn_cls$train$accuracy$mean, "(sd:", metrics_knn_cls$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_knn_cls$train$accuracy$mean, "(sd:", metrics_knn_cls$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_knn_cls$train$precision$mean, "(sd:", metrics_knn_cls$train$precision$sd, ")\n")
+cat("  Recall:", metrics_knn_cls$train$recall$mean, "(sd:", metrics_knn_cls$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_knn_cls$train$f1$mean, "(sd:", metrics_knn_cls$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_knn_cls$test$accuracy$mean, "(sd:", metrics_knn_cls$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_knn_cls$test$accuracy$mean, "(sd:", metrics_knn_cls$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_knn_cls$test$precision$mean, "(sd:", metrics_knn_cls$test$precision$sd, ")\n")
+cat("  Recall:", metrics_knn_cls$test$recall$mean, "(sd:", metrics_knn_cls$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_knn_cls$test$f1$mean, "(sd:", metrics_knn_cls$test$f1$sd, ")\n\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_knn_cls$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_knn_cls$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_knn_cls$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_knn_cls$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n\n")
 
 # Wyniki dla modelu drzewa decyzyjnego
 cat("Model drzewa decyzyjnego:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_tree_cls$train$accuracy$mean, "(sd:", metrics_tree_cls$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_tree_cls$train$accuracy$mean, "(sd:", metrics_tree_cls$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_tree_cls$train$precision$mean, "(sd:", metrics_tree_cls$train$precision$sd, ")\n")
+cat("  Recall:", metrics_tree_cls$train$recall$mean, "(sd:", metrics_tree_cls$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_tree_cls$train$f1$mean, "(sd:", metrics_tree_cls$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_tree_cls$test$accuracy$mean, "(sd:", metrics_tree_cls$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_tree_cls$test$accuracy$mean, "(sd:", metrics_tree_cls$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_tree_cls$test$precision$mean, "(sd:", metrics_tree_cls$test$precision$sd, ")\n")
+cat("  Recall:", metrics_tree_cls$test$recall$mean, "(sd:", metrics_tree_cls$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_tree_cls$test$f1$mean, "(sd:", metrics_tree_cls$test$f1$sd, ")\n\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_tree_cls$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_tree_cls$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_tree_cls$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_tree_cls$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n\n")
 
 # Wyniki dla modelu sieci neuronowej
 cat("Model sieci neuronowej:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_nn_cls$train$accuracy$mean, "(sd:", metrics_nn_cls$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_nn_cls$train$accuracy$mean, "(sd:", metrics_nn_cls$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_nn_cls$train$precision$mean, "(sd:", metrics_nn_cls$train$precision$sd, ")\n")
+cat("  Recall:", metrics_nn_cls$train$recall$mean, "(sd:", metrics_nn_cls$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_nn_cls$train$f1$mean, "(sd:", metrics_nn_cls$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_nn_cls$test$accuracy$mean, "(sd:", metrics_nn_cls$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_nn_cls$test$accuracy$mean, "(sd:", metrics_nn_cls$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_nn_cls$test$precision$mean, "(sd:", metrics_nn_cls$test$precision$sd, ")\n")
+cat("  Recall:", metrics_nn_cls$test$recall$mean, "(sd:", metrics_nn_cls$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_nn_cls$test$f1$mean, "(sd:", metrics_nn_cls$test$f1$sd, ")\n\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_nn_cls$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_nn_cls$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_nn_cls$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_nn_cls$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n")
 
-# Przygotowanie zbiorów danych dla modeli pakietowych
+
 set.seed(123)
 train_indices <- createDataPartition(data_cls_factor$y, p = 0.8, list = FALSE)
 train_data_cls <- data_cls_factor[train_indices, ]
@@ -642,12 +641,9 @@ cat("Rozkład klas w zbiorze testowym:\n")
 print(table(test_data_cls$y))
 
 
-# 6. Ustawienia kontrolne dla modeli pakietowych (caret)
-# Użyjemy stratygowanych foldów – funkcja createFolds gwarantuje, że w każdym foldzie będą obie klasy.
 folds <- createFolds(train_data_cls$y, k = 5)
 ctrl <- trainControl(method = "cv", number = 5, classProbs = TRUE, index = folds)
 lapply(folds, function(idx) table(train_data_cls$y[idx]))
-
 
 # Model k-NN przy użyciu caret
 knn_model_pkg <- train(y ~ ., 
@@ -657,62 +653,70 @@ knn_model_pkg <- train(y ~ .,
                        trControl = ctrl)
 knn_predictions_pkg <- predict(knn_model_pkg, newdata = data_cls_factor)
 knn_acc_pkg <- mean(knn_predictions_pkg == data_cls_factor$y)
+knn_precision_pkg <- precision(data_cls_factor$y, knn_predictions_pkg)
+knn_recall_pkg <- recall(data_cls_factor$y, knn_predictions_pkg)
+knn_f1_pkg <- f1_score(data_cls_factor$y, knn_predictions_pkg)
 
-# --- Model drzewa decyzyjnego (rpart) ---
-# Używamy metody "rpart". Aby ustawić maksymalną głębokość drzewa, przekazujemy
-# kontrolę za pomocą rpart.control(maxdepth = 5).
-
-# --- Model drzewa decyzyjnego przy użyciu caret ---
-# Problem przy rpart często wynika z bardzo niskiej wartości cp lub braku próbki jednej klasy w foldach.
-# Dlatego użyjemy metody "rpart" z ustalonym parametrem cp (tutaj 0.001) oraz dodatkowych ustawień:
+# Model drzewa decyzyjnego przy użyciu rpart
 tree_model_pkg <- train(y ~ ., 
                         data = data_cls_factor, 
                         method = "rpart",
-                        tuneGrid = data.frame(cp = 0.001),  # Możesz dostroić, ale zachowujemy spójność z własnym modelem
+                        tuneGrid = data.frame(cp = 0.001),
                         trControl = ctrl,
                         control = rpart.control(maxdepth = hyperparams_tree_cls$depth),
                         metric = "Accuracy")
 tree_predictions_pkg <- predict(tree_model_pkg, newdata = data_cls_factor)
 tree_acc_pkg <- mean(tree_predictions_pkg == data_cls_factor$y)
+tree_precision_pkg <- precision(data_cls_factor$y, tree_predictions_pkg)
+tree_recall_pkg <- recall(data_cls_factor$y, tree_predictions_pkg)
+tree_f1_pkg <- f1_score(data_cls_factor$y, tree_predictions_pkg)
 
-# --- Model sieci neuronowej (nnet) ---
+
+# Model sieci neuronowej przy użyciu nnet
 nn_model_pkg <- train(y ~ ., 
                       data = data_cls_factor, 
                       method = "nnet", 
                       tuneGrid = data.frame(size = hyperparams_nn_cls$hidden_neurons, decay = hyperparams_nn_cls$learning_rate),
                       trControl = ctrl,
                       maxit = hyperparams_nn_cls$epochs,
-                      linout = FALSE,  # Dla klasyfikacji
-                      trace = FALSE,    # Możesz ustawić trace = FALSE
+                      linout = FALSE,
+                      trace = FALSE,
                       MaxNWts = 10000)
 nn_predictions_pkg <- predict(nn_model_pkg, newdata = data_cls_factor)
 nn_acc_pkg <- mean(nn_predictions_pkg == data_cls_factor$y)
+nn_precision_pkg <- precision(data_cls_factor$y, nn_predictions_pkg)
+nn_recall_pkg <- recall(data_cls_factor$y, nn_predictions_pkg)
+nn_f1_pkg <- f1_score(data_cls_factor$y, nn_predictions_pkg)
 
 cat("\nWyniki modeli pakietowych (klasyfikacja binarna):\n")
 cat("Caret k-NN Accuracy:", knn_acc_pkg, "\n")
 cat("Caret Drzewo Accuracy:", tree_acc_pkg, "\n")
 cat("Caret Sieć NN Accuracy:", nn_acc_pkg, "\n")
 
-
-### 4. Porównanie wyników (CV własne vs. pakietowe)
-
 results_comparison_cls <- data.frame(
   Model = rep(c("k-NN", "Drzewo Decyzyjne", "Sieć Neuronowa"), 2),
   Podejście = rep(c("Własne", "Pakietowe"), each = 3),
   Accuracy = c(metrics_knn_cls$test$accuracy$mean, metrics_tree_cls$test$accuracy$mean, metrics_nn_cls$test$accuracy$mean,
-    knn_acc_pkg, tree_acc_pkg, nn_acc_pkg
-  )
+               knn_acc_pkg, tree_acc_pkg, nn_acc_pkg),
+  Precision = c(metrics_knn_cls$test$precision$mean, metrics_tree_cls$test$precision$mean, metrics_nn_cls$test$precision$mean,
+                knn_precision_pkg, tree_precision_pkg, nn_precision_pkg),
+  Recall = c(metrics_knn_cls$test$recall$mean, metrics_tree_cls$test$recall$mean, metrics_nn_cls$test$recall$mean,
+             knn_recall_pkg, tree_recall_pkg, nn_recall_pkg),
+  F1 = c(metrics_knn_cls$test$f1$mean, metrics_tree_cls$test$f1$mean, metrics_nn_cls$test$f1$mean,
+         knn_f1_pkg, tree_f1_pkg, nn_f1_pkg)
 )
 
 print(results_comparison_cls)
 
+library(reshape2)
+results_long <- melt(results_comparison_cls, id.vars = c("Model", "Podejście"), 
+                     variable.name = "Miara", value.name = "Wartość")
 
-
-ggplot(results_comparison_cls, aes(x = Model, y = Accuracy, fill = Podejście)) +
+ggplot(results_long, aes(x = Model, y = Wartość, fill = Podejście)) +
   geom_bar(stat = "identity", position = "dodge", color = "black") +
-  ggtitle("Porównanie dokładności modeli: Własne vs. Pakietowe (klasyfikacja binarna)") +
+  facet_wrap(~ Miara, scales = "free_y") +
+  ggtitle("Porównanie wyników modeli: Własne vs. Pakietowe (Klasyfikacja binarna)") +
   theme_minimal()
-
 
 # ============================================================
 # Problem Klasyfikacji Wieloklasowej
@@ -724,7 +728,6 @@ data <- read.csv("winequality-red.csv", sep = ";")
 
 unique(data$quality)
 
-# Histogram dla zmiennej targetowanej (quality)
 ggplot(data, aes(x = quality)) +
   geom_bar(fill = "steelblue", color = "black") +
   ggtitle("Rozkład zmiennej targetowanej (quality)") +
@@ -732,7 +735,6 @@ ggplot(data, aes(x = quality)) +
   ylab("Liczba próbek") +
   theme_minimal()
 
-# Histogramy  dla cech  numerycznych
 feature_names <- colnames(data)[-ncol(data)] 
 
 feature_plots <- lapply(feature_names, function(feature) {
@@ -746,7 +748,6 @@ feature_plots <- lapply(feature_names, function(feature) {
 
 do.call(grid.arrange, c(feature_plots[1:4], ncol = 2))
 
-# Boxploty dla każdej cechy w zależności od jakości wina
 feature_boxplots <- lapply(feature_names, function(feature) {
   ggplot(data, aes(x = factor(quality), y = .data[[feature]])) +
     geom_boxplot(fill = "orange", color = "black", alpha = 0.7) +
@@ -756,39 +757,17 @@ feature_boxplots <- lapply(feature_names, function(feature) {
     theme_minimal()
 })
 
-# Wyświetlenie kilku boxplotów
 do.call(grid.arrange, c(feature_boxplots[1:4], ncol = 2))
 
 
-# Przygotowanie danych
 target <- data$quality
 features <- data[, -ncol(data)]
 
-# Standaryzacja cech
 features_scaled <- as.data.frame(scale(features))
 
 data_multi <- cbind(features_scaled, quality = target)
 
 # Analiza hiperparametrów dla modeli wieloklasowych
-
-# Założenie: Dane zostały przygotowane w obiekcie data_multi,
-# gdzie:
-# - cechy zostały znormalizowane (features_scaled)
-# - kolumna target to "quality" (liczba jakości wina)
-# - zmienna quality w data_multi pozostaje numeryczna – przy wywołaniu custom_cv
-#   nasze funkcje (train_knn_multiclass, train_tree_multiclass, train_nn_multiclass)
-#   operują na danych numerycznych, a ocena Accuracy odbywa się na podstawie oryginalnych wartości.
-#
-# Upewnij się, że w pliku funkcje.R masz zdefiniowane:
-#   - custom_cv
-#   - train_knn_multiclass, predict_knn_multiclass
-#   - train_tree_multiclass, predict_tree_multiclass
-#   - train_nn_multiclass, predict_nn_multiclass
-#   - accuracy (funkcja oceniająca Accuracy)
-#
-# W poniższych przykładach przyjmujemy 5-krotną walidację krzyżową.
-
-### 1. Tuning dla własnego modelu k-NN (klasyfikacja wieloklasowa)
 knn_k_values <- c(3, 5, 7, 9, 11)
 results_knn_multi_custom <- data.frame(k = numeric(), accuracy = numeric())
 
@@ -825,7 +804,6 @@ ggplot(results_knn_multi_custom, aes(x = k, y = accuracy)) +
   ylab("Accuracy")
 
 
-### 2. Tuning dla własnego modelu drzewa decyzyjnego (klasyfikacja wieloklasowa)
 depth_values <- c(3, 5, 7, 9, 11)
 results_tree_multi_custom <- data.frame(depth = numeric(), accuracy = numeric())
 
@@ -861,7 +839,7 @@ ggplot(results_tree_multi_custom, aes(x = depth, y = accuracy)) +
   xlab("Głębokość drzewa") +
   ylab("Accuracy")
 
-### 3. Tuning dla własnego modelu sieci neuronowej (klasyfikacja wieloklasowa)
+
 nn_grid_multi <- expand.grid(hidden_neurons = c(50, 75, 100, 125),
                              learning_rate = c(0.0001, 0.0005, 0.001))
 results_nn_multi_custom <- data.frame(hidden_neurons = numeric(),
@@ -908,8 +886,6 @@ ggplot(results_nn_multi_custom, aes(x = factor(hidden_neurons), y = accuracy, fi
   labs(fill = "Learning Rate")
 
 
-
-# Parametry modeli
 hyperparams_knn_cls <- list(k = best_knn_multi$k)
 hyperparams_tree_cls <- list(depth = best_tree_multi$depth)
 hyperparams_nn_cls   <- list(hidden_neurons = best_nn_multi$hidden_neurons, epochs = 2000, learning_rate = best_nn_multi$learning_rate)
@@ -917,16 +893,15 @@ hyperparams_nn_cls   <- list(hidden_neurons = best_nn_multi$hidden_neurons, epoc
 
 set.seed(123)
 
-# Modele własne
 metrics_knn_multi <- custom_cv(
   data = data_multi,
   k_folds = 5,
   train_func = train_knn_multiclass,
   predict_func = predict_knn_multiclass,
-  performance_funcs = list(accuracy = accuracy),
-  hyperparams = hyperparams_knn_cls,   # przekazujemy parametr k
+  performance_funcs = list(accuracy = accuracy, precision = macro_precision, recall = macro_recall, f1 = macro_f1),
+  hyperparams = hyperparams_knn_cls,
   target_col = "quality",
-  pass_to_predict = TRUE       # jeśli funkcja predykcyjna również potrzebuje parametru k
+  pass_to_predict = TRUE
 )
 
 metrics_tree_multi <- custom_cv(
@@ -934,8 +909,8 @@ metrics_tree_multi <- custom_cv(
   k_folds = 5,
   train_func = train_tree_multiclass,
   predict_func = predict_tree_multiclass,
-  performance_funcs = list(accuracy = accuracy),
-  hyperparams = hyperparams_tree_cls,  # Używamy "depth", bo tak definiuje funkcja
+  performance_funcs = list(accuracy = accuracy, precision = macro_precision, recall = macro_recall, f1 = macro_f1),
+  hyperparams = hyperparams_tree_cls,
   target_col = "quality",
   pass_to_predict = FALSE
 )
@@ -945,7 +920,7 @@ metrics_nn_multi <- custom_cv(
   k_folds = 5,
   train_func = train_nn_multiclass,
   predict_func = predict_nn_multiclass,
-  performance_funcs = list(accuracy = accuracy),
+  performance_funcs = list(accuracy = accuracy, precision = macro_precision, recall = macro_recall, f1 = macro_f1),
   hyperparams = hyperparams_nn_cls,
   target_col = "quality",
   pass_to_predict = FALSE
@@ -957,50 +932,73 @@ cat("----------------------------------------------------\n")
 # Wyniki dla modelu k-NN
 cat("Model k-NN:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_knn_multi$train$accuracy$mean, "(sd:", metrics_knn_multi$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_knn_multi$train$accuracy$mean, "(sd:", metrics_knn_multi$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_knn_multi$train$precision$mean, "(sd:", metrics_knn_multi$train$precision$sd, ")\n")
+cat("  Recall:", metrics_knn_multi$train$recall$mean, "(sd:", metrics_knn_multi$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_knn_multi$train$f1$mean, "(sd:", metrics_knn_multi$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_knn_multi$test$accuracy$mean, "(sd:", metrics_knn_multi$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_knn_multi$test$accuracy$mean, "(sd:", metrics_knn_multi$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_knn_multi$test$precision$mean, "(sd:", metrics_knn_multi$test$precision$sd, ")\n")
+cat("  Recall:", metrics_knn_multi$test$recall$mean, "(sd:", metrics_knn_multi$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_knn_multi$test$f1$mean, "(sd:", metrics_knn_multi$test$f1$sd, ")\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_knn_multi$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_knn_multi$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_knn_multi$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_knn_multi$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n\n")
 
 # Wyniki dla modelu drzewa decyzyjnego
 cat("Model drzewa decyzyjnego:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_tree_multi$train$accuracy$mean, "(sd:", metrics_tree_multi$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_tree_multi$train$accuracy$mean, "(sd:", metrics_tree_multi$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_tree_multi$train$precision$mean, "(sd:", metrics_tree_multi$train$precision$sd, ")\n")
+cat("  Recall:", metrics_tree_multi$train$recall$mean, "(sd:", metrics_tree_multi$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_tree_multi$train$f1$mean, "(sd:", metrics_tree_multi$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_tree_multi$test$accuracy$mean, "(sd:", metrics_tree_multi$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_tree_multi$test$accuracy$mean, "(sd:", metrics_tree_multi$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_tree_multi$test$precision$mean, "(sd:", metrics_tree_multi$test$precision$sd, ")\n")
+cat("  Recall:", metrics_tree_multi$test$recall$mean, "(sd:", metrics_tree_multi$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_tree_multi$test$f1$mean, "(sd:", metrics_tree_multi$test$f1$sd, ")\n\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_tree_multi$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_tree_multi$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_tree_multi$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_tree_multi$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n\n")
 
 # Wyniki dla modelu sieci neuronowej
 cat("Model sieci neuronowej:\n")
 cat("Trening:\n")
-cat("  Accuracy:", metrics_nn_multi$train$accuracy$mean, "(sd:", metrics_nn_multi$train$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_nn_multi$train$accuracy$mean, "(sd:", metrics_nn_multi$train$accuracy$sd, ")\n")
+cat("  Precision:", metrics_nn_multi$train$precision$mean, "(sd:", metrics_nn_multi$train$precision$sd, ")\n")
+cat("  Recall:", metrics_nn_multi$train$recall$mean, "(sd:", metrics_nn_multi$train$recall$sd, ")\n")
+cat("  F1 Score:", metrics_nn_multi$train$f1$mean, "(sd:", metrics_nn_multi$train$f1$sd, ")\n\n")
 cat("Walidacja (Test):\n")
-cat("  Accuracy:", metrics_nn_multi$test$accuracy$mean, "(sd:", metrics_nn_multi$test$accuracy$sd, ")\n\n")
+cat("  Accuracy:", metrics_nn_multi$test$accuracy$mean, "(sd:", metrics_nn_multi$test$accuracy$sd, ")\n")
+cat("  Precision:", metrics_nn_multi$test$precision$mean, "(sd:", metrics_nn_multi$test$precision$sd, ")\n")
+cat("  Recall:", metrics_nn_multi$test$recall$mean, "(sd:", metrics_nn_multi$test$recall$sd, ")\n")
+cat("  F1 Score:", metrics_nn_multi$test$f1$mean, "(sd:", metrics_nn_multi$test$f1$sd, ")\n\n")
 cat("Różnica (Test - Trening):\n")
 cat("  Accuracy diff:", metrics_nn_multi$diff$accuracy$mean_diff, "\n")
+cat("  Precision diff:", metrics_nn_multi$diff$precision$mean_diff, "\n")
+cat("  Recall diff:", metrics_nn_multi$diff$recall$mean_diff, "\n")
+cat("  F1 diff:", metrics_nn_multi$diff$f1$mean_diff, "\n")
 cat("----------------------------------------------------\n")
 
 
 # Modele pakietowe (wieloklasowe)
 
-# Przygotowanie danych – dla modeli pakietowych target (quality) traktujemy jako factor:
 train_indices <- createDataPartition(data_multi$quality, p = 0.8, list = FALSE)
 train_data_pkg_multi <- cbind(features_scaled[train_indices, ], quality = as.factor(target[train_indices]))
 test_data_pkg_multi  <- cbind(features_scaled[-train_indices, ], quality = as.factor(target[-train_indices]))
 
-# Upewnij się, że poziomy targetu są poprawne (np. zaczynają się od litery)
 levels(train_data_pkg_multi$quality) <- make.names(levels(train_data_pkg_multi$quality))
 levels(test_data_pkg_multi$quality)  <- make.names(levels(test_data_pkg_multi$quality))
 
-# Ustawienia kontrolne dla caret – 10-krotna CV
 ctrl <- trainControl(method = "cv", number = 5)
 
 # Model KNN przy użyciu caret
-# Model k-NN przy użyciu caret
 knn_model_pkg_multi <- train(quality ~ ., 
                              data = train_data_pkg_multi, 
                              method = "knn", 
@@ -1008,6 +1006,10 @@ knn_model_pkg_multi <- train(quality ~ .,
                              trControl = ctrl)
 knn_predictions_pkg_multi <- predict(knn_model_pkg_multi, newdata = test_data_pkg_multi)
 knn_acc_pkg_multi <- mean(knn_predictions_pkg_multi == test_data_pkg_multi$quality)
+knn_precision_pkg <- macro_precision(test_data_pkg_multi$quality, knn_predictions_pkg_multi)
+knn_recall_pkg    <- macro_recall(test_data_pkg_multi$quality, knn_predictions_pkg_multi)
+knn_f1_pkg        <- macro_f1(test_data_pkg_multi$quality, knn_predictions_pkg_multi)
+
 
 # Model drzewa decyzyjnego przy użyciu rpart
 tree_model_pkg_multi <- train(quality ~ ., 
@@ -1019,6 +1021,9 @@ tree_model_pkg_multi <- train(quality ~ .,
                               metric = "Accuracy")
 tree_predictions_pkg_multi <- predict(tree_model_pkg_multi, newdata = test_data_pkg_multi)
 tree_acc_pkg_multi <- mean(tree_predictions_pkg_multi == test_data_pkg_multi$quality)
+tree_precision_pkg <- macro_precision(test_data_pkg_multi$quality, tree_predictions_pkg_multi)
+tree_recall_pkg    <- macro_recall(test_data_pkg_multi$quality, tree_predictions_pkg_multi)
+tree_f1_pkg        <- macro_f1(test_data_pkg_multi$quality, tree_predictions_pkg_multi)
 
 # Model sieci neuronowej przy użyciu nnet
 nn_model_pkg_multi <- train(quality ~ ., 
@@ -1032,6 +1037,9 @@ nn_model_pkg_multi <- train(quality ~ .,
                             MaxNWts = 10000)
 nn_predictions_pkg_multi <- predict(nn_model_pkg_multi, newdata = test_data_pkg_multi)
 nn_acc_pkg_multi <- mean(nn_predictions_pkg_multi == test_data_pkg_multi$quality)
+nn_precision_pkg <- macro_precision(test_data_pkg_multi$quality, nn_predictions_pkg_multi)
+nn_recall_pkg    <- macro_recall(test_data_pkg_multi$quality, nn_predictions_pkg_multi)
+nn_f1_pkg        <- macro_f1(test_data_pkg_multi$quality, nn_predictions_pkg_multi)
 
 
 cat("\nWyniki modeli pakietowych (wieloklasowych):\n")
@@ -1039,19 +1047,41 @@ cat("Caret KNN Accuracy:", knn_acc_pkg_multi, "\n")
 cat("Caret Drzewo Accuracy:", tree_acc_pkg_multi, "\n")
 cat("Caret Sieć NN Accuracy:", nn_acc_pkg_multi, "\n")
 
-# Porównanie modeli: Własne vs Pakietowe
-
-results_comparison_multiclass <- data.frame(
-  Model = rep(c("k-NN", "Drzewo Decyzyjne", "Sieć Neuronowa"), 2),
-  Podejście = rep(c("Własne", "Pakietowe"), each = 3),
-  Accuracy = c(metrics_knn_multi$test$accuracy$mean, metrics_tree_multi$test$accuracy$mean, metrics_nn_multi$test$accuracy$mean,
-    knn_acc_pkg_multi, tree_acc_pkg_multi, nn_acc_pkg_multi
-  )
+results_own <- data.frame(
+  Model = c("k-NN", "Drzewo Decyzyjne", "Sieć Neuronowa"),
+  Accuracy = c(metrics_knn_multi$test$accuracy$mean,
+               metrics_tree_multi$test$accuracy$mean,
+               metrics_nn_multi$test$accuracy$mean),
+  Precision = c(metrics_knn_multi$test$precision$mean,
+                metrics_tree_multi$test$precision$mean,
+                metrics_nn_multi$test$precision$mean),
+  Recall = c(metrics_knn_multi$test$recall$mean,
+             metrics_tree_multi$test$recall$mean,
+             metrics_nn_multi$test$recall$mean),
+  F1 = c(metrics_knn_multi$test$f1$mean,
+         metrics_tree_multi$test$f1$mean,
+         metrics_nn_multi$test$f1$mean)
 )
+results_own$Podejście <- "Własne"
+
+results_pkg <- data.frame(
+  Model = c("k-NN", "Drzewo Decyzyjne", "Sieć Neuronowa"),
+  Accuracy = c(knn_acc_pkg_multi, tree_acc_pkg_multi, nn_acc_pkg_multi),
+  Precision = c(knn_precision_pkg, tree_precision_pkg, nn_precision_pkg),
+  Recall = c(knn_recall_pkg, tree_recall_pkg, nn_recall_pkg),
+  F1 = c(knn_f1_pkg, tree_f1_pkg, nn_f1_pkg)
+)
+results_pkg$Podejście <- "Pakietowe"
+
+results_comparison_multiclass <- rbind(results_own, results_pkg)
 
 print(results_comparison_multiclass)
 
-ggplot(results_comparison_multiclass, aes(x = Model, y = Accuracy, fill = Podejście)) +
+results_long <- melt(results_comparison_multiclass, id.vars = c("Model", "Podejście"), 
+                     variable.name = "Miara", value.name = "Wartość")
+
+ggplot(results_long, aes(x = Model, y = Wartość, fill = Podejście)) +
   geom_bar(stat = "identity", position = "dodge", color = "black") +
-  ggtitle("Porównanie dokładności modeli: Własne vs. Pakietowe (klasyfikacja wieloklasowa)") +
+  facet_wrap(~ Miara, scales = "free_y") +
+  ggtitle("Porównanie wyników modeli: Własne vs. Pakietowe (klasyfikacja wieloklasowa)") +
   theme_minimal()

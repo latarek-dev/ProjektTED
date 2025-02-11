@@ -20,18 +20,86 @@ accuracy <- function(actual, predicted) {
   sum(actual == predicted) / length(actual)
 }
 
-confusion_matrix <- function(actual, predicted) {
-  table(Predicted = predicted, Actual = actual)
+precision <- function(actual, predicted, positive = "X1") {
+  if (!is.factor(actual)) {
+    actual <- factor(actual, levels = c(0, 1), labels = c("X0", "X1"))
+  }
+  if (!is.factor(predicted)) {
+    predicted <- factor(predicted, levels = c(0, 1), labels = c("X0", "X1"))
+  }
+  cm <- table(Actual = actual, Predicted = predicted)
+  if (!(positive %in% rownames(cm)) || !(positive %in% colnames(cm))) return(NA)
+  TP <- cm[positive, positive]
+  FP <- sum(cm[positive, ]) - TP
+  if ((TP + FP) == 0) return(NA)
+  return(TP / (TP + FP))
 }
 
-# ===============================
-# Funkcja walidacji krzyżowej zwracająca wiele miar
-# ===============================
+recall <- function(actual, predicted, positive = "X1") {
+  if (!is.factor(actual)) {
+    actual <- factor(actual, levels = c(0, 1), labels = c("X0", "X1"))
+  }
+  if (!is.factor(predicted)) {
+    predicted <- factor(predicted, levels = c(0, 1), labels = c("X0", "X1"))
+  }
+  cm <- table(Actual = actual, Predicted = predicted)
+  if (!(positive %in% rownames(cm)) || !(positive %in% colnames(cm))) return(NA)
+  TP <- cm[positive, positive]
+  FN <- sum(cm[, positive]) - TP
+  if ((TP + FN) == 0) return(NA)
+  return(TP / (TP + FN))
+}
+
+f1_score <- function(actual, predicted, positive = "X1") {
+  p <- precision(actual, predicted, positive)
+  r <- recall(actual, predicted, positive)
+  if (is.na(p) || is.na(r) || (p + r) == 0) return(NA)
+  return(2 * p * r / (p + r))
+}
+
+macro_precision <- function(actual, predicted) {
+  classes <- sort(unique(actual))
+  precs <- sapply(classes, function(cl) {
+    cm <- table(predicted, actual)
+    if (!(as.character(cl) %in% rownames(cm)) || !(as.character(cl) %in% colnames(cm))) {
+      return(NA)
+    }
+    TP <- cm[as.character(cl), as.character(cl)]
+    FP <- sum(cm[as.character(cl), ]) - TP
+    if ((TP + FP) == 0) return(NA) else return(TP / (TP + FP))
+  })
+  return(mean(precs, na.rm = TRUE))
+}
+
+macro_recall <- function(actual, predicted) {
+  classes <- sort(unique(actual))
+  recs <- sapply(classes, function(cl) {
+    cm <- table(predicted, actual)
+    if (!(as.character(cl) %in% rownames(cm)) || !(as.character(cl) %in% colnames(cm))) {
+      return(NA)
+    }
+    TP <- cm[as.character(cl), as.character(cl)]
+    FN <- sum(cm[, as.character(cl)]) - TP
+    if ((TP + FN) == 0) return(NA) else return(TP / (TP + FN))
+  })
+  return(mean(recs, na.rm = TRUE))
+}
+
+macro_f1 <- function(actual, predicted) {
+  p <- macro_precision(actual, predicted)
+  r <- macro_recall(actual, predicted)
+  if ((p + r) == 0) return(NA)
+  return(2 * p * r / (p + r))
+}
+
+# =============================================================
+# Funkcja walidacji krzyżowej
+# =============================================================
 custom_cv <- function(data, k_folds, train_func, predict_func, 
                                performance_funcs,  # np. list(rmse = rmse, r2 = r2_score)
                                hyperparams = NULL, target_col, pass_to_predict = TRUE) {
   n <- nrow(data)
-  indices <- sample(1:n)  # losowe mieszanie indeksów
+  indices <- sample(1:n)
   fold_size <- floor(n / k_folds)
   
   # Przygotowujemy listy na wyniki dla każdej metryki osobno dla treningowych i testowych foldów
@@ -104,7 +172,7 @@ custom_cv <- function(data, k_folds, train_func, predict_func,
 # Problem Regresji
 # ============================================================
 
-# --- Model KNN ---
+# --- Model KNN dla regresji ---
 train_knn <- function(train_X, train_y, ...) {
   args <- list(...)
   if (is.null(args$k)) stop("Podaj wartość k!")
@@ -115,7 +183,6 @@ train_knn <- function(train_X, train_y, ...) {
 
 predict_knn <- function(model, test_X, ...) {
   args <- list(...)
-  # Używamy przekazanego k, jeśli jest, lub zapisanego w modelu
   k_used <- if (!is.null(args$k)) args$k else model$k
   train_X <- as.matrix(model$X)
   train_y <- model$y
@@ -134,9 +201,8 @@ predict_knn <- function(model, test_X, ...) {
   return(predictions)
 }
 
-# --- Model drzewa decyzyjnego ---
+# --- Model drzewa decyzyjnego dla regresji ---
 train_tree <- function(train_X, train_y, max_depth, ...) {
-  # Funkcja rekurencyjna budująca drzewo
   build_tree <- function(X, y, depth) {
     if (depth == 0 || length(unique(y)) == 1) {
       return(mean(y))
@@ -189,7 +255,6 @@ predict_tree <- function(model, X, ...) {
   return(predictions)
 }
 
-# --- Model sieci neuronowej ---
 clip_gradient <- function(grad, threshold = 1.0) {
   norm_grad <- sqrt(sum(grad^2))
   if (norm_grad > threshold) {
@@ -198,7 +263,7 @@ clip_gradient <- function(grad, threshold = 1.0) {
   return(grad)
 }
 
-# --- Model sieci neuronowej z gradient clipping ---
+# --- Model sieci neuronowej dla regresji ---
 train_nn <- function(train_X, train_y, hidden_neurons, epochs, learning_rate, clip_threshold = 1.0, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.numeric(train_y)
@@ -226,7 +291,7 @@ train_nn <- function(train_X, train_y, hidden_neurons, epochs, learning_rate, cl
     #}
     
     # Obliczanie gradientów
-    d_output <- error  # dla regresji z liniową aktywacją na wyjściu
+    d_output <- error
     d_hidden <- (d_output %*% t(w_output)) * tanh_deriv(hidden_input)
     
     # Zastosowanie gradient clipping
@@ -256,10 +321,8 @@ predict_nn <- function(model, test_X, ...) {
 # Klasyfikacja binarna
 # ============================================================
 
-# --- k-NN dla klasyfikacji ---
+# --- k-NN dla klasyfikacji binarnej ---
 train_knn_classification <- function(train_X, train_y, ...) {
-  # Nawet jeśli nie wykorzystujemy hiperparametrów w treningu, dodajemy ...,
-  # żeby funkcja mogła przyjmować dodatkowe argumenty przekazywane przez CV.
   return(list(X = train_X, y = train_y))
 }
 
@@ -275,24 +338,19 @@ predict_knn_classification <- function(model, test_X, k = 10, threshold = 0.5) {
     distances <- sqrt(rowSums((train_X - matrix(test_X[i, ], nrow = nrow(train_X), 
                                                 ncol = ncol(train_X), byrow = TRUE))^2))
     neighbors <- order(distances)[1:k]
-    # Konwersja etykiet z faktora na liczby
     neighbor_vals <- as.numeric(as.character(train_y[neighbors]))
-    # Jeśli średnia z sąsiadów przekracza próg, przypisz 1, w przeciwnym razie 0
     predictions[i] <- ifelse(mean(neighbor_vals) > threshold, 1, 0)
   }
   
   return(predictions)
 }
 
-# --- Drzewo decyzyjne dla klasyfikacji ---
+# --- Drzewo decyzyjne dla klasyfikacji binarnej ---
 train_tree_classification <- function(X, y, depth, ...) {
-  # Upewnij się, że y jest faktorem
   y <- as.factor(y)
   
-  # Usuń NA z y, aby warunek mógł poprawnie działać
   y_clean <- na.omit(y)
   
-  # Warunek zatrzymania: osiągnięto maksymalną głębokość lub wszystkie etykiety są takie same
   if (depth == 0 || length(unique(y_clean)) == 1) {
     return(names(which.max(table(y_clean))))
   }
@@ -306,13 +364,11 @@ train_tree_classification <- function(X, y, depth, ...) {
       left_indices <- X[, feature] <= split
       right_indices <- X[, feature] > split
       
-      # Sprawdzenie, czy podział daje niepuste zbiory
       if (sum(left_indices) == 0 || sum(right_indices) == 0) next
       
       left <- y[left_indices]
       right <- y[right_indices]
       
-      # Obliczamy impurity Gini dla każdego podzbioru:
       gini_left <- 1 - sum((table(left) / length(left))^2)
       gini_right <- 1 - sum((table(right) / length(right))^2)
       gini <- (length(left) / length(y)) * gini_left + (length(right) / length(y)) * gini_right
@@ -324,12 +380,10 @@ train_tree_classification <- function(X, y, depth, ...) {
     }
   }
   
-  # Jeśli nie znaleziono dobrego podziału, zwróć najczęściej występującą etykietę
   if (is.null(best_split)) {
     return(names(which.max(table(y_clean))))
   }
   
-  # Rekurencyjne budowanie drzewa
   left_indices <- X[, best_split$feature] <= best_split$value
   right_indices <- X[, best_split$feature] > best_split$value
   
@@ -359,7 +413,7 @@ predict_tree_classification <- function(tree, X, ...) {
   return(as.integer(predictions))
 }
 
-# --- Sieć neuronowa dla klasyfikacji ---
+# --- Sieć neuronowa dla klasyfikacji binarnej ---
 train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epochs = 2000, learning_rate = 0.0005, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.numeric(train_y)
@@ -379,7 +433,6 @@ train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epoch
   sigmoid <- function(x) 1 / (1 + exp(-x))
   sigmoid_derivative <- function(x) x * (1 - x)
   
-  # Wektor do zapisywania wartości straty
   loss_history <- numeric(epochs)
   
   for (epoch in 1:epochs) {
@@ -389,7 +442,6 @@ train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epoch
     loss <- mean(error^2)
     loss_history[epoch] <- loss
     
-    # Wypisywanie co 100 epok
     #if (epoch %% 100 == 0) {
     #  cat("Epoka:", epoch, "Strata:", loss, "\n")
     #}
@@ -428,10 +480,8 @@ predict_nn_classification <- function(model, test_X, ...) {
 # Klasyfikacja wieloklasowa
 # ============================================================
 
-### KNN MULTICLASS
-
+# --- k-NN dla klasyfikacji wieloklasowej ---
 train_knn_multiclass <- function(train_X, train_y, ...) {
-  # Upewnij się, że etykiety są faktorem
   train_y <- as.factor(train_y)
   return(list(X = train_X, y = train_y))
 }
@@ -457,11 +507,10 @@ predict_knn_multiclass <- function(model, test_X, k = 10) {
 }
 
 
-### DRZEWO DECYZYJNE MULTICLASS
-
+# --- Drzewo decyzyjne dla klasyfikacji wieloklasowej ---
 train_tree_multiclass <- function(X, y, depth, ...) {
   y <- as.factor(y)
-  # Warunek zatrzymania: głębokość 0 lub wszystkie etykiety takie same
+
   if (depth == 0 || length(unique(y)) == 1) {
     return(names(which.max(table(y))))
   }
@@ -479,7 +528,7 @@ train_tree_multiclass <- function(X, y, depth, ...) {
       
       left <- y[left_indices]
       right <- y[right_indices]
-      # Gini impurity dla każdego podzbioru:
+
       gini_left <- 1 - sum((table(left) / length(left))^2)
       gini_right <- 1 - sum((table(right) / length(right))^2)
       gini <- (length(left) / length(y)) * gini_left + (length(right) / length(y)) * gini_right
@@ -521,8 +570,7 @@ predict_tree_multiclass <- function(tree, X, ...) {
 }
 
 
-### SIEĆ NEURONOWA MULTICLASS
-
+# --- Sieć neuronowa dla klasyfikacji wieloklasowej ---
 train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs = 2000, learning_rate = 0.001, ...) {
   train_X <- as.matrix(train_X)
   train_y <- as.factor(train_y)
@@ -537,7 +585,6 @@ train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs =
   n_samples <- nrow(train_X)
   n_classes <- length(labels)
   
-  # One-hot encoding
   y_one_hot <- matrix(0, nrow = n_samples, ncol = n_classes)
   for (i in 1:n_samples) {
     y_one_hot[i, train_y_int[i]] <- 1
