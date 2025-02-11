@@ -1,4 +1,4 @@
-source("funkcje 3.R")
+source("funkcje 4.R")
 
 # Wczytanie bibliotek
 library(caret)
@@ -6,14 +6,12 @@ library(rpart)
 library(nnet)
 library(neuralnet)
 library(ggplot2)
-setwd("C:\\Users\\korna\\Downloads\\projekt")
-# Sprawdzamy, czy katalog został ustawiony poprawnie
-getwd()
+library(reshape2)  
 
 ## Regresja 
+cat("____________________REGRESJA_______________________")
 # Wczytanie danych
 data <- read.csv("abalone.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
-# Sprawdzenie danych wejściowych
 cat("Wymiary danych:", dim(data), "\n")
 cat("Nazwy kolumn:\n")
 print(names(data))
@@ -24,13 +22,14 @@ print(head(data))
 data_clean <- na.omit(data)
 cat("Wymiary danych po usunięciu braków:", dim(data_clean), "\n")
 
-# Podział na dane treningowe i testowe
+# Podział na dane treningowe i testowe (80% - 20%)
 set.seed(123)
 train_idx <- sample(1:nrow(data_clean), 0.8 * nrow(data_clean))
 test_idx <- setdiff(1:nrow(data_clean), train_idx)
 
 train_data <- data_clean[train_idx, ]
 test_data <- data_clean[test_idx, ]
+
 # Konwersja kolumn nieliczbowych w zbiorach treningowych i testowych
 train_data <- as.data.frame(lapply(train_data, safe_numeric_conversion))
 test_data <- as.data.frame(lapply(test_data, safe_numeric_conversion))
@@ -43,231 +42,211 @@ cat("Kolumny nieliczbowe:\n", names(train_data)[non_numeric_cols], "\n")
 cat("Liczba wartości NA w danych treningowych po konwersji:", sum(is.na(train_data)), "\n")
 cat("Liczba wartości NA w danych testowych po konwersji:", sum(is.na(test_data)), "\n")
 
-# Zastąpienie wartości NA zerem
+# Zastąpienie wartości NA zerem (jeśli wystąpiły)
 train_data[is.na(train_data)] <- 0
 test_data[is.na(test_data)] <- 0
 
-# Przyjmujemy, że ostatnia kolumna to zmienna docelowa,
-# więc skalujemy tylko zmienne objaśniające, a zmienną docelową pozostawiamy w oryginalnej skali.
+# Zakładamy, że ostatnia kolumna to zmienna docelowa, więc cechy (X) skalujemy, a y pozostaje oryginalne.
 target_column <- ncol(train_data)
-
-# Rozdzielenie danych na cechy (X) oraz zmienną docelową (y)
 x_train <- train_data[, -target_column]
 y_train <- train_data[, target_column]
+x_test  <- test_data[, -target_column]
+y_test  <- test_data[, target_column]
 
-x_test <- test_data[, -target_column]
-y_test <- test_data[, target_column]
-
-# Normalizacja tylko zmiennych objaśniających
+# Normalizacja zmiennych objaśniających
 x_train_scaled <- scale(x_train)
-x_test_scaled <- scale(x_test, 
-                       center = attr(x_train_scaled, "scaled:center"), 
-                       scale = attr(x_train_scaled, "scaled:scale"))
+x_test_scaled  <- scale(x_test,
+                        center = attr(x_train_scaled, "scaled:center"),
+                        scale  = attr(x_train_scaled, "scaled:scale"))
 
+
+# Walidacja krzyżowa (CV)
 set.seed(123)
 folds_reg <- createFolds(y_train, k = 5)
 
-# CV dla własnego modelu KNN (regresja)
-custom_knn_cv <- function(k_value) {
-  mse_fold <- numeric(length(folds_reg))
-  for(i in seq_along(folds_reg)) {
-    fold_idx <- folds_reg[[i]]
-    x_tr_cv <- x_train_scaled[-fold_idx, ]
-    y_tr_cv <- y_train[-fold_idx]
-    x_val_cv <- x_train_scaled[fold_idx, ]
-    y_val_cv <- y_train[fold_idx]
-    
-    preds_cv <- knn_my_regression(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
-    mse_fold[i] <- mse(preds_cv, y_val_cv)
-  }
-  return(mean(mse_fold))
-}
 
+# CV dla własnego modelu KNN (regresja)
+# Obliczamy CV MSE dla k od 1 do 10
 k_values_cv <- 1:10
-cv_mse_knn <- sapply(k_values_cv, custom_knn_cv)
-best_k_cv <- k_values_cv[which.min(cv_mse_knn)]
-cat("CV: Najlepsze k dla własnego KNN (regresja) =", best_k_cv, "ze średnim MSE =", min(cv_mse_knn), "\n")
+cv_mse_knn_folds <- sapply(k_values_cv, function(k_val) custom_knn_cv(k_val))
+cv_mse_knn_mean <- apply(cv_mse_knn_folds, 2, mean)
+cv_mse_knn_sd   <- apply(cv_mse_knn_folds, 2, sd)
+
+best_k_cv <- k_values_cv[which.min(cv_mse_knn_mean)]
+cat("CV: Najlepsze k dla własnego KNN (regresja) =", best_k_cv, 
+    "ze średnim MSE =", min(cv_mse_knn_mean), "\n")
+cat("CV: Odchylenie standardowe MSE dla poszczególnych k:\n")
+print(data.frame(k = k_values_cv, Mean_MSE = cv_mse_knn_mean, SD_MSE = cv_mse_knn_sd))
+
+# Dla stabilności KNN – sprawdzamy wyniki dla najlepszego k:
+mse_folds_best_knn <- custom_knn_cv(best_k_cv)
+knn_cv_std <- sd(mse_folds_best_knn)
+cat("CV: Standardowe odchylenie MSE dla własnego KNN z k =", best_k_cv, "wynosi", knn_cv_std, "\n")
+
 
 # CV dla własnego drzewa decyzyjnego (regresja)
-custom_tree_cv <- function(depth_value) {
-  mse_fold <- numeric(length(folds_reg))
-  for(i in seq_along(folds_reg)) {
-    fold_idx <- folds_reg[[i]]
-    x_tr_cv <- x_train_scaled[-fold_idx, ]
-    y_tr_cv <- y_train[-fold_idx]
-    x_val_cv <- x_train_scaled[fold_idx, ]
-    y_val_cv <- y_train[fold_idx]
-    
-    tree_mod_cv <- decision_tree_reg(x_tr_cv, y_tr_cv, depth = depth_value)
-    preds_cv <- predict_tree_reg(tree_mod_cv, x_val_cv)
-    mse_fold[i] <- mse(preds_cv, y_val_cv)
-  }
-  return(mean(mse_fold))
-}
 
 depth_values_cv <- 1:10
-cv_mse_tree <- sapply(depth_values_cv, custom_tree_cv)
-best_depth_cv <- depth_values_cv[which.min(cv_mse_tree)]
-cat("CV: Najlepsza głębokość dla własnego drzewa (regresja) =", best_depth_cv, "ze średnim MSE =", min(cv_mse_tree), "\n")
+cv_mse_tree_folds <- sapply(depth_values_cv, function(d) custom_tree_cv(d))
+cv_mse_tree_mean <- apply(cv_mse_tree_folds, 2, mean)
+cv_mse_tree_sd   <- apply(cv_mse_tree_folds, 2, sd)
+
+best_depth_cv <- depth_values_cv[which.min(cv_mse_tree_mean)]
+cat("CV: Najlepsza głębokość dla własnego drzewa (regresja) =", best_depth_cv, 
+    "ze średnim MSE =", min(cv_mse_tree_mean), "\n")
+cat("CV: Odchylenie standardowe MSE dla poszczególnych głębokości:\n")
+print(data.frame(Depth = depth_values_cv, Mean_MSE = cv_mse_tree_mean, SD_MSE = cv_mse_tree_sd))
+
+# Dla stabilności drzewa – sprawdzamy wyniki dla najlepszego depth:
+mse_folds_best_tree <- custom_tree_cv(best_depth_cv)
+tree_cv_std <- sd(mse_folds_best_tree)
+cat("CV: Standardowe odchylenie MSE dla własnego drzewa z głębokością =", best_depth_cv, "wynosi", tree_cv_std, "\n")
+
 
 # CV dla własnej sieci neuronowej (regresja)
-custom_nn_cv <- function(hidden_neurons, epochs, lr) {
-  mse_fold <- numeric(length(folds_reg))
-  for(i in seq_along(folds_reg)) {
-    fold_idx <- folds_reg[[i]]
-    x_tr_cv <- x_train_scaled[-fold_idx, ]
-    y_tr_cv <- y_train[-fold_idx]
-    x_val_cv <- x_train_scaled[fold_idx, ]
-    y_val_cv <- y_train[fold_idx]
-    
-    nn_mod_cv <- neural_network_my(x_tr_cv, y_tr_cv, hidden_layers = hidden_neurons, epochs = epochs, learning_rate = lr)
-    preds_cv <- predict_nn_reg(nn_mod_cv, x_val_cv)
-    mse_fold[i] <- mse(as.numeric(preds_cv), y_val_cv)
-  }
-  return(mean(mse_fold))
-}
 
 nn_cv_mse <- custom_nn_cv(hidden_neurons = c(5), epochs = 100, lr = 0.01)
 cat("CV: Własna sieć NN (regresja) dla 5 neuronów, 100 epok, lr=0.01 ma średnie MSE =", nn_cv_mse, "\n")
 
 
-####KNN
-knn_predictions <- knn_my_regression(x_train_scaled, y_train, 
-                                     x_test_scaled, k = 3)
-cat("Pierwsze wyniki KNN(regresja) :\n", knn_predictions[1:5], "\n")
+#_________________________________________________
+cat("____________________________________________")
+###KNN na zbiorze testowym
+knn_predictions <- knn_my_regression(x_train_scaled, y_train, x_test_scaled, k = 3)
+cat("Pierwsze wyniki KNN (regresja) :\n", knn_predictions[1:5], "\n")
 
-# Obliczanie dokładności własnego modelu 
 mse_knn <- mse(knn_predictions, y_test)
-mae_knn <- mean(abs(knn_predictions - y_test))  # Średni błąd bezwzględny 
-rmse_knn <- sqrt(mean((knn_predictions - y_test)^2))  # Pierwiastek błędu kwadratowego
-r2_knn <- 1 - sum((knn_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)  # Współczynnik determinacji R^2
+mae_knn <- mean(abs(knn_predictions - y_test))
+rmse_knn <- sqrt(mean((knn_predictions - y_test)^2))
+r2_knn <- 1 - sum((knn_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
 
 cat("MSE dla własnego KNN (regresja):", mse_knn, "\n")
 cat("MAE dla własnego KNN (regresja):", mae_knn, "\n")
 cat("RMSE dla własnego KNN (regresja):", rmse_knn, "\n")
-cat("R² dla własnego KNN(regresja):", r2_knn, "\n")
+cat("R² dla własnego KNN (regresja):", r2_knn, "\n")
 
-#Anliza hiperparametrów
-wyniki <- data.frame(k = numeric(), 
-                     mse = numeric(), 
-                     mae = numeric(), 
-                     rmse = numeric(), 
-                     r2 = numeric())
-
-# Pętla po wartościach k od 1 do 10
-for (k in 1:10) {
-  # Obliczenie predykcji dla bieżącej wartości k
+# Analiza hiperparametrów dla KNN 
+wyniki <- data.frame(k = numeric(), mse = numeric(), mae = numeric(), rmse = numeric(), r2 = numeric())
+for (k in 1:20) {
   knn_predictions <- knn_my_regression(x_train_scaled, y_train, x_test_scaled, k = k)
-  
-  
-  # Obliczanie metryk jakości modelu
   mse_knn <- mse(knn_predictions, y_test)
-  mae_knn <- mean(abs(knn_predictions - y_test))           
-  rmse_knn <- sqrt(mean((knn_predictions - y_test)^2))       
-  r2_knn <- 1 - sum((knn_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)  
-  
-  # Dodanie wyników dla aktualnego k do ramki danych
+  mae_knn <- mean(abs(knn_predictions - y_test))
+  rmse_knn <- sqrt(mean((knn_predictions - y_test)^2))
+  r2_knn <- 1 - sum((knn_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
   wyniki <- rbind(wyniki, data.frame(k = k, mse = mse_knn, mae = mae_knn, rmse = rmse_knn, r2 = r2_knn))
 }
-
-# Wyświetlenie wyników
 print(wyniki)
-# Wybór najlepszego k na podstawie minimalnego MSE
 best_k_regr <- wyniki$k[which.min(wyniki$mse)]
 cat("Najlepsze k (minimalne MSE):", best_k_regr, "\n")
 
-#wbudowane knn
-knn_model <- train(x_train_scaled, y_train, method = "knn", 
-                   tuneGrid = data.frame(k = 3))
-knn_model_predictions <- predict(knn_model, newdata = x_test_scaled)
-cat("Liczba predykcji w wbudowanym modelu:", length(knn_model_predictions), "\n")
+wyniki_melted <- melt(wyniki, id.vars = "k")
+ggplot(wyniki_melted, aes(x = k, y = value, color = variable, group = variable)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = best_k_regr, linetype = "dashed", color = "black") +
+  labs(title = "Wpływ liczby sąsiadów k na jakość modelu KNN",
+       x = "Liczba sąsiadów (k)", y = "Wartość metryki", color = "Metryka") +
+  theme_minimal()
 
-# Metryki dla wbudowanego modelu
+
+#KNN własny dla k = 10
+knn_predictions <- knn_my_regression(x_train_scaled, y_train, x_test_scaled, k = 10)
+cat("Pierwsze wyniki KNN (regresja) dla k=10:\n", knn_predictions[1:5], "\n")
+
+mse_knn <- mse(knn_predictions, y_test)
+mae_knn <- mean(abs(knn_predictions - y_test))
+rmse_knn <- sqrt(mean((knn_predictions - y_test)^2))
+r2_knn <- 1 - sum((knn_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
+
+cat("MSE dla własnego KNN (regresja, k=10):", mse_knn, "\n")
+cat("MAE dla własnego KNN (regresja, k=10):", mae_knn, "\n")
+cat("RMSE dla własnego KNN (regresja, k=10):", rmse_knn, "\n")
+cat("R² dla własnego KNN (regresja, k=10):", r2_knn, "\n")
+
+# Wbudowany KNN
+knn_model <- train(x_train_scaled, y_train, method = "knn", tuneGrid = data.frame(k = 10))
+knn_model_predictions <- predict(knn_model, newdata = x_test_scaled)
+
+cat("Liczba predykcji w wbudowanym modelu KNN:", length(knn_model_predictions), "\n")
 mse_knn_model <- mse(knn_model_predictions, y_test)
 mae_knn_model <- mean(abs(knn_model_predictions - y_test))
 rmse_knn_model <- sqrt(mean((knn_model_predictions - y_test)^2))
 r2_knn_model <- 1 - sum((knn_model_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
 
-cat("MSE dla wbudowanego KNN(regresja):", mse_knn_model, "\n")
-cat("MAE dla wbudowanego KNN (regresja):", mae_knn_model, "\n")
-cat("RMSE dla wbudowanego KNN (regresja):", rmse_knn_model, "\n")
-cat("R² dla wbudowanego KNN(regresja):", r2_knn_model, "\n")
+cat("Wbudowany KNN (k=10):\n")
+cat("  MSE:", mse_knn_model, "\n")
+cat("  MAE:", mae_knn_model, "\n")
+cat("  RMSE:", rmse_knn_model, "\n")
+cat("  R²:", r2_knn_model, "\n")
 
 metrics <- data.frame(
   Model = rep(c("KNN", "KNN_wbudowany"), each = 3),
   Metric = rep(c("MSE", "MAE", "RMSE"), 2),
   Value = c(mse_knn, mae_knn, rmse_knn, mse_knn_model, mae_knn_model, rmse_knn_model)
 )
-
-# Rysujemy wykres słupkowy porównujący metryki KNN
 ggplot(metrics, aes(x = Metric, y = Value, fill = Model)) +
   geom_bar(stat = "identity", position = "dodge") +
   labs(title = "Porównanie wyników błędu KNN: Własny vs Wbudowany", y = "Wartość metryki", x = "Metryka") +
   theme_minimal()
 
 
-# Wywołanie własnej funkcji drzewa decyzyjnego (maksymalna głębokość = 5)
+###Drzewo decyzyjne###
 tree_decision <- decision_tree_reg(x_train_scaled, y_train, depth = 5)
 tree_predictions <- predict_tree_reg(tree_decision, x_test_scaled)
 cat("Pierwsze wyniki drzewa decyzyjnego (Własne):\n", tree_predictions[1:5], "\n")
 
-# Obliczanie metryk dla własnego drzewa decyzyjnego
 mse_tree <- mse(tree_predictions, y_test)
 mae_tree <- mean(abs(tree_predictions - y_test))
 rmse_tree <- sqrt(mean((tree_predictions - y_test)^2))
 r2_tree <- 1 - sum((tree_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
 
-cat("MSE dla własnego drzewa:", mse_tree, "\n")
-cat("MAE dla własnego drzewa:", mae_tree, "\n")
-cat("RMSE dla własnego drzewa:", rmse_tree, "\n")
-cat("R² dla własnego drzewa:", r2_tree, "\n")
+cat("Własne drzewo decyzyjne:\n")
+cat("  MSE:", mse_tree, "\n")
+cat("  MAE:", mae_tree, "\n")
+cat("  RMSE:", rmse_tree, "\n")
+cat("  R²:", r2_tree, "\n")
 
-# Przygotowanie danych treningowych – łączenie cech (x_train_scaled) oraz zmiennej docelowej (y_train_scaled)
+# Wbudowane drzewo decyzyjne (caret)
 train_data_dt <- as.data.frame(x_train_scaled)
-train_data_dt$target <- y_train   # nazwa kolumny celu to "target"
-
-# Przygotowanie danych testowych – zbiór x_test_scaled (przekształcony do data.frame)
+train_data_dt$target <- y_train
 test_data_dt <- as.data.frame(x_test_scaled)
-# Trenowanie drzewa decyzyjnego (wbudowanego) z maksymalną głębokością równą 5
-tree_model <- train(target ~ ., 
-                    data = train_data_dt, 
-                    method = "rpart",
-                    tuneGrid = data.frame(cp = 0.01),   
+tree_model <- train(target ~ ., data = train_data_dt, method = "rpart",
+                    tuneGrid = data.frame(cp = 0.01),
                     trControl = trainControl(method = "none"),
                     control = rpart.control(maxdepth = 5))
 
 tree_model_predictions <- predict(tree_model, newdata = test_data_dt)
 cat("Pierwsze wyniki drzewa decyzyjnego (Wbudowane):\n", tree_model_predictions[1:5], "\n")
 
-# Obliczanie metryk dla wbudowanego drzewa decyzyjnego
 mse_tree_model <- mse(tree_model_predictions, y_test)
 mae_tree_model <- mean(abs(tree_model_predictions - y_test))
 rmse_tree_model <- sqrt(mean((tree_model_predictions - y_test)^2))
 r2_tree_model <- 1 - sum((tree_model_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
 
-cat("MSE dla wbudowanego drzewa:", mse_tree_model, "\n")
-cat("MAE dla wbudowanego drzewa:", mae_tree_model, "\n")
-cat("RMSE dla wbudowanego drzewa:", rmse_tree_model, "\n")
-cat("R² dla wbudowanego drzewa:", r2_tree_model, "\n")
+cat("Wbudowane drzewo decyzyjne:\n")
+cat("  MSE:", mse_tree_model, "\n")
+cat("  MAE:", mae_tree_model, "\n")
+cat("  RMSE:", rmse_tree_model, "\n")
+cat("  R²:", r2_tree_model, "\n")
 
-#wykres słupkowy porównujący metryki TREE
 metrics_tree <- data.frame(
   Model = rep(c("Drzewo_własne", "Drzewo_wbudowane"), each = 3),
   Metric = rep(c("MSE", "MAE", "RMSE"), 2),
   Value = c(mse_tree, mae_tree, rmse_tree, mse_tree_model, mae_tree_model, rmse_tree_model)
 )
-
 ggplot(metrics_tree, aes(x = Metric, y = Value, fill = Model)) +
   geom_bar(stat = "identity", position = "dodge") +
-  labs(title = "Porównanie wyników błędu drzewa decyzyjnego:\nWłasne vs Wbudowane", 
-       y = "Wartość metryki", 
-       x = "Metryka") +
+  labs(title = "Porównanie wyników błędu drzewa decyzyjnego: Własne vs Wbudowane",
+       y = "Wartość metryki", x = "Metryka") +
   theme_minimal()
+
+
+###Sieć neuronowa###
 
 # Sieć neuronowa własna 
 x_train_scaled <- as.matrix(x_train_scaled)
 x_test_scaled  <- as.matrix(x_test_scaled)
-x_test_scaled <- cbind(1, x_test_scaled)
+x_test_scaledd <- cbind(1, x_test_scaled)
 
 # Trening sieci neuronowej – uwaga: wagi są przechowywane w liście model$W, więc funkcja predict_nn_reg odwołuje się do model$W[[l]]
 nn_model_regression <- neural_network_my(x_train_scaled, y_train, hidden_layers = 5, epochs = 100, learning_rate = 0.01)
@@ -276,13 +255,10 @@ nn_model_regression <- neural_network_my(x_train_scaled, y_train, hidden_layers 
 nn_predictions_regression <- as.numeric(predict_nn_reg(nn_model_regression, x_test_scaled))
 cat("Pierwsze wyniki sieci neuronowej (Własna):\n", nn_predictions_regression[1:5], "\n")
 
-
-# Obliczanie metryk dla własnej sieci neuronowej
 mse_nn <- mse(nn_predictions_regression, y_test)
 mae_nn <- mean(abs(nn_predictions_regression - y_test))
 rmse_nn <- sqrt(mean((nn_predictions_regression - y_test)^2))
-r2_nn <- 1 - sum((nn_predictions_regression - y_test)^2) / 
-  sum((y_test - mean(y_test))^2)
+r2_nn <- 1 - sum((nn_predictions_regression - y_test)^2) / sum((y_test - mean(y_test))^2)
 
 cat("Własna sieć neuronowa:\n")
 cat("  MSE:", mse_nn, "\n")
@@ -290,19 +266,14 @@ cat("  MAE:", mae_nn, "\n")
 cat("  RMSE:", rmse_nn, "\n")
 cat("  R²:", r2_nn, "\n\n")
 
-#Wbudowane sieci neuronowe
-nn_model_builtin <- nnet(x_train_scaled, y_train, 
-                         size = 5, linout = TRUE, maxit = 100, decay = 0.01, trace = FALSE)
-
-# Predykcja wbudowanej sieci neuronowej
+# Wbudowana sieć neuronowa z pakietem nnet
+nn_model_builtin <- nnet(x_train_scaled, y_train, size = 5, linout = TRUE, maxit = 100, decay = 0.01, trace = FALSE)
 nn_predictions_builtin <- predict(nn_model_builtin, x_test_scaled)
 
-# Obliczanie metryk dla wbudowanej sieci neuronowej
 mse_nn_builtin <- mse(nn_predictions_builtin, y_test)
 mae_nn_builtin <- mean(abs(nn_predictions_builtin - y_test))
 rmse_nn_builtin <- sqrt(mean((nn_predictions_builtin - y_test)^2))
-r2_nn_builtin <- 1 - sum((nn_predictions_builtin - y_test)^2) / 
-  sum((y_test - mean(y_test))^2)
+r2_nn_builtin <- 1 - sum((nn_predictions_builtin - y_test)^2) / sum((y_test - mean(y_test))^2)
 
 cat("Wbudowana sieć neuronowa:\n")
 cat("  MSE:", mse_nn_builtin, "\n")
@@ -310,53 +281,186 @@ cat("  MAE:", mae_nn_builtin, "\n")
 cat("  RMSE:", rmse_nn_builtin, "\n")
 cat("  R²:", r2_nn_builtin, "\n")
 
-#Porównanie własnych sieci i wbudowanych.
 metrics_nn <- data.frame(
   Model = rep(c("Własna_NN", "Wbudowana_NN"), each = 3),
   Metric = rep(c("MSE", "MAE", "RMSE"), 2),
   Value = c(mse_nn, mae_nn, rmse_nn, mse_nn_builtin, mae_nn_builtin, rmse_nn_builtin)
 )
-
 ggplot(metrics_nn, aes(x = Metric, y = Value, fill = Model)) +
   geom_bar(stat = "identity", position = "dodge") +
-  labs(title = "Porównanie wyników błędu sieci neuronowych:\nWłasna vs Wbudowana", 
-       y = "Wartość metryki", 
-       x = "Metryka") +
+  labs(title = "Porównanie wyników błędu sieci neuronowych: Własna vs Wbudowana",
+       y = "Wartość metryki", x = "Metryka") +
   theme_minimal()
 
-# Porównanie zgodności własnych funkcji z modelami wbudowanymi
 
-# Dla KNN:
-diff_knn <- abs(mse_knn - mse_knn_model) +
-  abs(mae_knn - mae_knn_model) +
-  abs(rmse_knn - rmse_knn_model) +
-  abs(r2_knn - r2_knn_model)
-
-# Dla drzewa decyzyjnego:
-diff_tree <- abs(mse_tree - mse_tree_model) +
-  abs(mae_tree - mae_tree_model) +
-  abs(rmse_tree - rmse_tree_model) +
-  abs(r2_tree - r2_tree_model)
-
-# Dla sieci neuronowych:
-diff_nn <- abs(mse_nn - mse_nn_builtin) +
-  abs(mae_nn - mae_nn_builtin) +
-  abs(rmse_nn - rmse_nn_builtin) +
-  abs(r2_nn - r2_nn_builtin)
-
-# Sumaryczne różnice zapisujemy w wektorze:
+# Porównanie zgodności własnych funkcji z modelami wbudowanymi dla regresji###################################################
+#__________________________________________________________________________#
+cat("Porównanie zgodności własnych funkcji z modelami wbudowanymi dla regresji")
+diff_knn  <- abs(mse_knn - mse_knn_model) + abs(mae_knn - mae_knn_model) + abs(rmse_knn - rmse_knn_model) + abs(r2_knn - r2_knn_model)
+diff_tree <- abs(mse_tree - mse_tree_model) + abs(mae_tree - mae_tree_model) + abs(rmse_tree - rmse_tree_model) + abs(r2_tree - r2_tree_model)
+diff_nn   <- abs(mse_nn - mse_nn_builtin) + abs(mae_nn - mae_nn_builtin) + abs(rmse_nn - rmse_nn_builtin) + abs(r2_nn - r2_nn_builtin)
 diffs <- c(KNN = diff_knn, Drzewo = diff_tree, NN = diff_nn)
 
 cat("\nSuma różnic między metrykami własnych funkcji a modelami wbudowanymi:\n")
 print(diffs)
-
-# Wybieramy metodę, dla której suma różnic jest najmniejsza
 best_model <- names(which.min(diffs))
 cat("\nNajwiększą zgodność z modelem wbudowanym wykazuje metoda:", best_model, "\n")
 
-# Klasyfikacja binarna 
-###################################
+#/wykres pokazujący sumy różnic między własnymi a wbudowanymi 
+diff_df <- data.frame(
+  Model = names(diffs),
+  Difference = as.numeric(diffs)
+)
 
+# Wykres słupkowy sumarycznych różnic
+ggplot(diff_df, aes(x = Model, y = Difference, fill = Model)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(title = "Suma różnic między metrykami własnych funkcji a modelami wbudowanymi",
+       x = "Model",
+       y = "Suma różnic") +
+  theme_minimal()
+
+#________
+
+### Crosswalidacja dla wbudowanych modeli
+cat("\n=== Crosswalidacja dla wbudowanych modeli ===\n")
+
+ctrl_cv <- trainControl(method = "cv", number = 5)
+
+# Wbudowany KNN z CV 
+knn_model_cv <- train(x_train_scaled, y_train, 
+                      method = "knn", 
+                      tuneGrid = data.frame(k = 10), 
+                      trControl = ctrl_cv)
+
+knn_cv_predictions <- predict(knn_model_cv, newdata = x_test_scaled)
+
+mse_knn_cv <- mse(knn_cv_predictions, y_test)
+mae_knn_cv <- mean(abs(knn_cv_predictions - y_test))
+rmse_knn_cv <- sqrt(mean((knn_cv_predictions - y_test)^2))
+r2_knn_cv <- 1 - sum((knn_cv_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
+
+cat("\nWbudowany KNN (CV):\n")
+cat("  MSE:", mse_knn_cv, "\n")
+cat("  MAE:", mae_knn_cv, "\n")
+cat("  RMSE:", rmse_knn_cv, "\n")
+cat("  R²:", r2_knn_cv, "\n")
+
+#Wbudowane drzewo decyzyjne z CV
+tree_model_cv <- train(target ~ ., 
+                       data = train_data_dt, 
+                       method = "rpart",
+                       tuneGrid = data.frame(cp = 0.01),
+                       trControl = ctrl_cv,
+                       control = rpart.control(maxdepth = 5))
+
+tree_cv_predictions <- predict(tree_model_cv, newdata = test_data_dt)
+
+mse_tree_cv <- mse(tree_cv_predictions, y_test)
+mae_tree_cv <- mean(abs(tree_cv_predictions - y_test))
+rmse_tree_cv <- sqrt(mean((tree_cv_predictions - y_test)^2))
+r2_tree_cv <- 1 - sum((tree_cv_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
+
+cat("\nWbudowane drzewo decyzyjne (CV):\n")
+cat("  MSE:", mse_tree_cv, "\n")
+cat("  MAE:", mae_tree_cv, "\n")
+cat("  RMSE:", rmse_tree_cv, "\n")
+cat("  R²:", r2_tree_cv, "\n")
+
+#Wbudowana sieć neuronowa z CV 
+nn_model_cv <- train(x_train_scaled, y_train, 
+                     method = "nnet", 
+                     tuneGrid = data.frame(size = 5, decay = 0.01), 
+                     linout = TRUE, 
+                     trace = FALSE, 
+                     maxit = 100, 
+                     trControl = ctrl_cv)
+
+nn_cv_predictions <- predict(nn_model_cv, newdata = x_test_scaled)
+
+mse_nn_cv <- mse(nn_cv_predictions, y_test)
+mae_nn_cv <- mean(abs(nn_cv_predictions - y_test))
+rmse_nn_cv <- sqrt(mean((nn_cv_predictions - y_test)^2))
+r2_nn_cv <- 1 - sum((nn_cv_predictions - y_test)^2) / sum((y_test - mean(y_test))^2)
+
+cat("\nWbudowana sieć neuronowa (CV):\n")
+cat("  MSE:", mse_nn_cv, "\n")
+cat("  MAE:", mae_nn_cv, "\n")
+cat("  RMSE:", rmse_nn_cv, "\n")
+cat("  R²:", r2_nn_cv, "\n")
+
+### Porównanie wyników uczenia i walidacji dla modeli własnych  ##################################################################
+                                                
+cat("\n Porównanie wyników uczenia i walidacji dla modeli(regresja) \n")
+
+#-KNN
+cat("\nKNN (k = ", best_k_cv, "):\n", sep = "")
+
+#oliczenie błędu na zbiorze uczącym
+knn_train_preds <- knn_my_regression(x_train_scaled, y_train, x_train_scaled, k = best_k_cv)
+mse_train_knn <- mse(knn_train_preds, y_train)
+cat("  MSE na zbiorze uczącym: ", mse_train_knn, "\n", sep = "")
+
+#błąd walidacji (CV) (średnie MSE dla najlepszego k)
+cv_mse_knn_best <- min(cv_mse_knn_mean)
+cat("  Średnie MSE walidacji krzyżowej: ", cv_mse_knn_best, "\n", sep = "")
+
+# -Drzewo decyzyjne
+cat("\nDrzewo decyzyjne (głębokość = ", best_depth_cv, "):\n", sep = "")
+#obliczenie błędu na zbiorze uczącym
+
+tree_model_train <- decision_tree_reg(x_train_scaled, y_train, depth = best_depth_cv)
+tree_train_preds <- predict_tree_reg(tree_model_train, x_train_scaled)
+
+mse_train_tree <- mse(tree_train_preds, y_train)
+cat("  MSE na zbiorze uczącym: ", mse_train_tree, "\n", sep = "")
+
+#błąd walidacji (CV)
+cv_mse_tree_best <- min(cv_mse_tree_mean)
+cat("  Średnie MSE walidacji krzyżowej: ", cv_mse_tree_best, "\n", sep = "")
+
+# -Sieć neuronowa
+cat("\nSieć neuronowa (5 neuronów, 100 epok, lr = 0.01):\n")
+
+#przygotowanie zbioru uczącego dla sieci
+x_train_nn_bias <- as.matrix(x_train_scaled)
+
+nn_train_preds <- as.numeric(predict_nn_reg(nn_model_regression, x_train_nn_bias))
+mse_train_nn <- mse(nn_train_preds, y_train)
+
+cat("  MSE na zbiorze uczącym: ", mse_train_nn, "\n", sep = "")
+
+cv_mse_nn <- nn_cv_mse  
+cat("  Średnie MSE walidacji krzyżowej: ", cv_mse_nn, "\n", sep = "")
+
+
+#Podsumowanie wyników 
+model_names <- c("KNN", "Drzewo", "Sieć NN")
+training_mse <- c(mse_train_knn, mse_train_tree, mse_train_nn)
+cv_mse_values <- c(cv_mse_knn_best, cv_mse_tree_best, cv_mse_nn)
+results_df <- data.frame(Model = rep(model_names, each = 2),
+                         DataSet = rep(c("Uczenie", "Walidacja"), times = length(model_names)),
+                         MSE = c(mse_train_knn, cv_mse_knn_best,
+                                 mse_train_tree, cv_mse_tree_best,
+                                 mse_train_nn, cv_mse_nn))
+
+cat("\nPorównanie MSE dla zbiorów uczącego i walidacyjnego:\n")
+print(results_df)
+
+#Wykres porównawczy
+library(ggplot2)
+ggplot(results_df, aes(x = Model, y = MSE, fill = DataSet)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Porównanie MSE: zbiór uczący vs walidacja",
+       y = "MSE", x = "Model") +
+  theme_minimal()
+
+###################################
+#                                 #
+#     Klasyfikacja binarna        ################################################################ 
+#                                 #
+###################################
+cat("________________KLASYFIKACJA_BINARNA______________________")
 source("funkcje.R")
 # Wczytanie danych
 data_b <- read.csv("winequality-white.csv", sep = ";")
@@ -403,20 +507,6 @@ set.seed(123)
 folds_class <- createFolds(train_labels, k = 5)
 
 # CV dla własnego modelu KNN (klasyfikacja)
-custom_knn_class_cv <- function(k_value) {
-  acc_fold <- numeric(length(folds_class))
-  for(i in seq_along(folds_class)) {
-    fold_idx <- folds_class[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    preds_cv <- knn_binary(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
-    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
-  }
-  return(mean(acc_fold))
-}
 
 k_values_class_cv <- seq(1, 20, by = 2)
 cv_acc_knn_class <- sapply(k_values_class_cv, custom_knn_class_cv)
@@ -424,43 +514,11 @@ best_k_class_cv <- k_values_class_cv[which.max(cv_acc_knn_class)]
 cat("CV: Najlepsze k dla własnego KNN (klasyfikacja) =", best_k_class_cv, "ze średnią accuracy =", max(cv_acc_knn_class), "\n")
 
 # CV dla własnego drzewa decyzyjnego (klasyfikacja)
-custom_tree_class_cv <- function(depth_value) {
-  acc_fold <- numeric(length(folds_class))
-  for(i in seq_along(folds_class)) {
-    fold_idx <- folds_class[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    tree_mod_cv <- decision_tree_binary(x_tr_cv, y_tr_cv, depth = depth_value)
-    preds_cv <- predict_tree_binary(tree_mod_cv, x_val_cv)
-    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
-  }
-  return(mean(acc_fold))
-}
 
 depth_values_class_cv <- 1:10
 cv_acc_tree_class <- sapply(depth_values_class_cv, custom_tree_class_cv)
 best_depth_class_cv <- depth_values_class_cv[which.max(cv_acc_tree_class)]
 cat("CV: Najlepsza głębokość dla własnego drzewa (klasyfikacja) =", best_depth_class_cv, "ze średnią accuracy =", max(cv_acc_tree_class), "\n")
-
-# CV dla własnej sieci neuronowej (klasyfikacja)
-custom_nn_class_cv <- function(hidden_neurons, epochs, lr) {
-  acc_fold <- numeric(length(folds_class))
-  for(i in seq_along(folds_class)) {
-    fold_idx <- folds_class[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    nn_mod_cv <- neural_network_binary(x_tr_cv, y_tr_cv, hidden_neurons = hidden_neurons, epochs = epochs, learning_rate = lr)
-    preds_cv <- predict_nn_binary(nn_mod_cv, x_val_cv)
-    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
-  }
-  return(mean(acc_fold))
-}
 
 nn_class_cv_acc <- custom_nn_class_cv(hidden_neurons = 5, epochs = 100, lr = 0.01)
 cat("CV: Własna sieć NN (klasyfikacja) dla 5 neuronów, 100 epok, lr=0.01 ma średnią accuracy =", nn_class_cv_acc, "\n")
@@ -524,6 +582,7 @@ cat("dla k=13", "\n")
 cm_knn <- confusionMatrix(as.factor(knn_predictions), as.factor(test_labels), positive = "1")
 sensitivity_knn <- cm_knn$byClass["Sensitivity"]
 specificity_knn <- cm_knn$byClass["Specificity"]
+
 cat("Czułość własnego modelu :", round(sensitivity_knn, 13), "\n")
 cat("Specyficzność włąsnego modelu :", round(specificity_knn, 13), "\n")
 cat("Dokładność KNN dla własnego :", knn_accuracy, "\n")
@@ -532,6 +591,7 @@ cat("Dokładność KNN dla własnego :", knn_accuracy, "\n")
 cm_knn_model <- confusionMatrix(knn_model_predictions, test_labels, positive = "1")
 sensitivity_knn_model <- cm_knn_model$byClass["Sensitivity"]
 specificity_knn_model <- cm_knn_model$byClass["Specificity"]
+
 cat("Czułość wbudowane:", round(sensitivity_knn_model, 13), "\n")
 cat("Specyficzność wbudowane):", round(specificity_knn_model, 13), "\n")
 cat("Dokładność KNN wbudowane :", knn_model_accuracy, "\n")
@@ -571,6 +631,7 @@ ggplot(comparison_melt, aes(x = Metric, y = Value, fill = Model)) +
 tree_model <- decision_tree_binary(train_data, train_labels, depth = 5)
 tree_predictions <- predict_tree_binary(tree_model, test_data)
 tree_accuracy <- accuracy_b(tree_predictions, test_labels)
+
 cat("Dokładność drzewa decyzyjnego z głębokością 5 (własne):", tree_accuracy, "\n")
 
 #Analiza dokładności w zależności od głębokości 
@@ -602,6 +663,7 @@ cat("Najlepsza głębokość drzewa:", best_depth, "\n")
 tree_model <- decision_tree_binary(train_data, train_labels, depth = 17)
 tree_predictions <- predict_tree_binary(tree_model, test_data)
 tree_accuracy <- accuracy_b(tree_predictions, test_labels)
+
 cat("Dokładność drzewa decyzyjnego z głębokością 17 (własne):", tree_accuracy, "\n")
 
 #Wbudowane drzewo decyzyjne
@@ -612,6 +674,7 @@ test_data_dt <- as.data.frame(test_data)
 tree_model_builtin <- train(target ~ ., data = train_data_dt, method = "rpart", tuneGrid = data.frame(cp = 0.01))
 tree_model_predictions <- predict(tree_model_builtin, newdata = test_data_dt)
 tree_model_accuracy <- accuracy_b(tree_model_predictions, test_labels)
+
 cat("Dokładność drzewa decyzyjnego (wbudowane):", tree_model_accuracy, "\n")
 
 #PORÓWNANIE MODELI DRZEWA DECYZYJNEGO
@@ -619,6 +682,7 @@ cat("Dla drzewa decyzyjnego, głębokość = 17", "\n")
 
 # Dla własnego drzewa decyzyjnego (własna implementacja)
 cm_tree <- confusionMatrix(as.factor(tree_predictions), as.factor(test_labels), positive = "1")
+
 sensitivity_tree <- cm_tree$byClass["Sensitivity"]
 specificity_tree <- cm_tree$byClass["Specificity"]
 
@@ -670,21 +734,22 @@ ggplot(comparison_tree_melt, aes(x = Metric, y = Value, fill = Model)) +
 nn_model <- neural_network_binary(train_data, train_labels, hidden_neurons = c(8), epochs = 20, learning_rate = 0.01)
 nn_predictions <- predict_nn_binary(nn_model, test_data)
 nn_accuracy <- accuracy_b(nn_predictions, test_labels)
+
 cat("Dokładność sieci neuronowej dla hidden_neurons = 8, epochs = 200, learning_rate = 0.01 (własne):", nn_accuracy, "\n")
 
 #Analiza hiperparametrów 
-# Zakresu hiperparametrów
+
 hidden_neurons_values <- seq(5, 30, by = 5)        
 epochs_values <- seq(50, 300, by = 50)               
 learning_rates <- c(0.001, 0.005, 0.01, 0.05, 0.1)   
-# Przygotowanie pustej ramki danych do zapisywania wyników
+
 grid_results <- data.frame(hidden_neurons = integer(),
                            epochs = integer(),
                            learning_rate = numeric(),
                            accuracy = numeric(),
                            stringsAsFactors = FALSE)
 
-# Pętla iterująca przez wszystkie kombinacje hiperparametrów
+# Pętla iter. przez wszystkie kombinacje hiperparametrów
 for (h in hidden_neurons_values) {
   for (e in epochs_values) {
     for (lr in learning_rates) {
@@ -721,6 +786,7 @@ print(grid_results)
 # Wybór najlepszej kombinacji (najwyższa dokładność)
 best_index <- which.max(grid_results$accuracy)
 best_params <- grid_results[best_index, ]
+
 cat("Najlepsza konfiguracja hiperparametrów:\n")
 print(best_params)
 
@@ -728,9 +794,10 @@ print(best_params)
 nn_model <- neural_network_binary(train_data, train_labels, hidden_neurons =c(5), epochs = 50, learning_rate = 0.001)
 nn_predictions <- predict_nn_binary(nn_model, test_data)
 nn_accuracy <- accuracy_b(nn_predictions, test_labels)
+
 cat("Dokładność sieci neuronowej dla hidden_neurons = 5, epochs = 50, learning_rate = 0.001 (własne):", nn_accuracy, "\n")
 
-# Wbudowana sieć neuronowa 
+#Wbudowana sieć neuronowa 
 
 train_labels_onehot <- class.ind(train_labels)
 test_labels_onehot <- class.ind(test_labels)
@@ -800,7 +867,125 @@ ggplot(comparison_nn_melt, aes(x = Metric, y = Value, fill = Model)) +
        y = "Wartość") +
   theme_minimal()
 
-#######Klasyfikacja wieloklasowa######
+#________
+
+### Crosswalidacja dla wbudowanych modeli
+train_labels <- as.factor(train_labels)
+test_labels  <- as.factor(test_labels)
+
+
+train_control_cv <- trainControl(method = "cv", number = 5)
+
+#CV dla wbudowanego modelu KNN
+knn_model_cv <- train(train_data, train_labels, 
+                      method = "knn", 
+                      tuneGrid = data.frame(k = 13),
+                      trControl = train_control_cv)
+
+knn_model_cv_predictions <- predict(knn_model_cv, newdata = test_data)
+knn_model_cv_accuracy <- accuracy_b(knn_model_cv_predictions, test_labels)
+
+cat("\nCV dla wbudowanego KNN:\n")
+cat("  Dokładność (CV):", round(knn_model_cv_accuracy, 4), "\n")
+
+#CV dla wbudowanego drzewa decyzyjnego
+train_data_dt <- as.data.frame(train_data)
+train_data_dt$target <- train_labels
+test_data_dt <- as.data.frame(test_data)
+
+tree_model_cv <- train(target ~ ., 
+                       data = train_data_dt, 
+                       method = "rpart",
+                       tuneGrid = data.frame(cp = 0.01),
+                       trControl = train_control_cv,
+                       control = rpart.control(maxdepth = 5))
+
+tree_model_cv_predictions <- predict(tree_model_cv, newdata = test_data_dt)
+
+tree_model_cv_accuracy <- accuracy_b(tree_model_cv_predictions, test_labels)
+cat("\nCV dla wbudowanego drzewa decyzyjnego:\n")
+cat("  Dokładność (CV):", round(tree_model_cv_accuracy, 4), "\n")
+
+#CV dla wbudowanej sieci neuronowej
+# Używamy metody "nnet" – należy upewnić się, że pakiet nnet jest załadowany
+nn_model_cv <- train(train_data, train_labels,
+                     method = "nnet",
+                     tuneGrid = data.frame(size = 10, decay = 0.01),
+                     trControl = train_control_cv,
+                     trace = FALSE, maxit = 200)
+
+nn_model_cv_predictions <- predict(nn_model_cv, newdata = test_data)
+nn_model_cv_accuracy <- accuracy_b(nn_model_cv_predictions, test_labels)
+
+cat("\nCV dla wbudowanej sieci neuronowej:\n")
+cat("  Dokładność (CV):", round(nn_model_cv_accuracy, 4), "\n")
+
+#Porównanie wyników CV dla modeli wbudowanych 
+cv_results <- data.frame(
+  Model = c("KNN_wbudowany", "Drzewo_wbudowane", "NN_wbudowana"),
+  CV_Accuracy = c(knn_model_cv_accuracy, tree_model_cv_accuracy, nn_model_cv_accuracy)
+)
+cat("\nPorównanie dokładności modeli wbudowanych (CV):\n")
+print(cv_results)
+
+# Wizualizacja wyników CV dla modeli wbudowanych 
+ggplot(cv_results, aes(x = Model, y = CV_Accuracy, fill = Model)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Dokładność modeli wbudowanych (CV)",
+       x = "Model", y = "Dokładność (CV)") +
+  theme_minimal()
+
+#### Porównanie wyników dla modeli własnych (klasyfikacja bin)  ##################################################################
+
+
+# Dla KNN (własna implementacja)
+#obliczamy predykcje na zbiorze treningowym (uczenie) – funkcja knn_binary
+
+preds_train_knn <- knn_binary(train_data, train_labels, train_data, k = best_k_class_cv)
+train_acc_knn <- accuracy_b(preds_train_knn, train_labels)
+
+# CV accuracy uzyskane wcześniej  (maksymalną średnią dokładność)
+val_acc_knn <- max(cv_acc_knn_class)
+
+# Dla drzewa decyzyjnego (własna implementacja)
+tree_model_train <- decision_tree_binary(train_data, train_labels, depth = best_depth_class_cv)
+preds_train_tree <- predict_tree_binary(tree_model_train, train_data)
+train_acc_tree <- accuracy_b(preds_train_tree, train_labels)
+
+val_acc_tree <- max(cv_acc_tree_class)
+
+# Dla sieci neuronowej (własna implementacja)
+nn_model_train <- neural_network_binary(train_data, train_labels, hidden_neurons = 5, epochs = 100, learning_rate = 0.01)
+preds_train_nn <- predict_nn_binary(nn_model_train, train_data)
+train_acc_nn <- accuracy_b(as.numeric(preds_train_nn), train_labels)
+
+val_acc_nn <- nn_class_cv_acc
+
+# Wyświetlenie wyników
+cat("\nPorównanie wyników (Training vs CV) dla modeli klasyfikacyjnych:\n")
+cat("KNN: Training Accuracy =", round(train_acc_knn, 4), " | CV Accuracy =", round(val_acc_knn, 4), "\n")
+cat("Drzewo: Training Accuracy =", round(train_acc_tree, 4), " | CV Accuracy =", round(val_acc_tree, 4), "\n")
+cat("Sieć NN: Training Accuracy =", round(train_acc_nn, 4), " | CV Accuracy =", round(val_acc_nn, 4), "\n")
+
+#ramka danych
+comparison_df <- data.frame(
+  Model = rep(c("KNN", "Drzewo", "NN"), each = 2),
+  Set = rep(c("Training", "Validation"), 3),
+  Accuracy = c(train_acc_knn, val_acc_knn,
+               train_acc_tree, val_acc_tree,
+               train_acc_nn, val_acc_nn)
+)
+
+# Wizualizacja 
+ggplot(comparison_df, aes(x = Model, y = Accuracy, fill = Set)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Porównanie wyników: Training vs CV dla własnych modeli klasyfikacyjnych b.",
+       x = "Model", y = "Accuracy") +
+  theme_minimal()
+
+######################################
+#      Klasyfikacja wieloklasowa     #################################################################################
+######################################
 # Wczytanie danych
 data_w <- read.csv("breast-cancer-wisconsin.csv", sep=",", header=FALSE)
 
@@ -830,66 +1015,18 @@ test_data <- as.matrix(test_data)
 set.seed(123)
 folds_multi <- createFolds(train_labels, k = 5)
 
-# CV dla własnego modelu KNN (wieloklasowa)
-custom_knn_multi_cv <- function(k_value) {
-  acc_fold <- numeric(length(folds_multi))
-  for(i in seq_along(folds_multi)) {
-    fold_idx <- folds_multi[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    preds_cv <- knn_wieloklasowa(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
-    acc_fold[i] <- accuracy(preds_cv, as.numeric(as.character(y_val_cv)))
-  }
-  return(mean(acc_fold))
-}
 
 k_values_multi <- seq(1, 20, by = 2)
 cv_acc_knn_multi <- sapply(k_values_multi, custom_knn_multi_cv)
 best_k_multi <- k_values_multi[which.max(cv_acc_knn_multi)]
 cat("CV: Najlepsze k dla własnego KNN (wieloklasowa) =", best_k_multi, "ze średnią accuracy =", max(cv_acc_knn_multi), "\n")
 
-# CV dla własnego drzewa decyzyjnego (wieloklasowa)
-custom_tree_multi_cv <- function(depth_value) {
-  acc_fold <- numeric(length(folds_multi))
-  for(i in seq_along(folds_multi)) {
-    fold_idx <- folds_multi[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    tree_mod_cv <- decision_tree_w(x_tr_cv, y_tr_cv, depth = depth_value, criterion = "entropy")
-    preds_cv <- predict_tree_w(tree_mod_cv, x_val_cv)
-    preds_cv <- factor(preds_cv, levels = levels(train_labels))
-    acc_fold[i] <- accuracy(preds_cv, y_val_cv)
-  }
-  return(mean(acc_fold))
-}
+
 
 depth_values_multi <- 1:10
 cv_acc_tree_multi <- sapply(depth_values_multi, custom_tree_multi_cv)
 best_depth_multi <- depth_values_multi[which.max(cv_acc_tree_multi)]
 cat("CV: Najlepsza głębokość dla własnego drzewa (wieloklasowa) =", best_depth_multi, "ze średnią accuracy =", max(cv_acc_tree_multi), "\n")
-
-# CV dla własnej sieci neuronowej (wieloklasowa)
-custom_nn_multi_cv <- function(hidden_neurons, epochs, lr) {
-  acc_fold <- numeric(length(folds_multi))
-  for(i in seq_along(folds_multi)) {
-    fold_idx <- folds_multi[[i]]
-    x_tr_cv <- train_data[-fold_idx, ]
-    y_tr_cv <- train_labels[-fold_idx]
-    x_val_cv <- train_data[fold_idx, ]
-    y_val_cv <- train_labels[fold_idx]
-    
-    nn_mod_cv <- neural_network_train(x_tr_cv, y_tr_cv, hidden_neurons = hidden_neurons, epochs = epochs, learning_rate = lr)
-    preds_cv <- predict_nn(nn_mod_cv, x_val_cv)
-    acc_fold[i] <- accuracy(preds_cv, y_val_cv)
-  }
-  return(mean(acc_fold))
-}
 
 cv_acc_nn_multi <- custom_nn_multi_cv(hidden_neurons = 5, epochs = 200, lr = 0.01)
 cat("CV: Własna sieć NN (wieloklasowa) dla 5 neuronów, 200 epok, lr=0.01 ma średnią accuracy =", cv_acc_nn_multi, "\n")
@@ -1000,7 +1137,7 @@ ggplot(nn_df, aes(x = hidden_neurons, y = accuracy)) +
        x = "Liczba neuronów", y = "Dokładność") +
   theme_minimal()
 
-nn_model <- neural_network_train(train_data, train_labels, hidden_neurons =C(9), epochs = 200, learning_rate = 0.01)
+nn_model <- neural_network_train(train_data, train_labels, hidden_neurons = 9, epochs = 200, learning_rate = 0.01)
 nn_predictions <- predict_nn(nn_model, test_data)
 nn_accuracy <- accuracy(nn_predictions, test_labels)
 cat("Dokładność sieci neuronowej dla 9 (własne):", nn_accuracy, "\n")

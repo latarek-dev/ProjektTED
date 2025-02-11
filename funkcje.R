@@ -28,16 +28,18 @@ confusion_matrix <- function(actual, predicted) {
 # Funkcja walidacji krzyżowej zwracająca wiele miar
 # ===============================
 custom_cv <- function(data, k_folds, train_func, predict_func, 
-                            performance_funcs,  # np. list(accuracy = accuracy)
-                            hyperparams = NULL, target_col, pass_to_predict = TRUE) {
+                               performance_funcs,  # np. list(rmse = rmse, r2 = r2_score)
+                               hyperparams = NULL, target_col, pass_to_predict = TRUE) {
   n <- nrow(data)
   indices <- sample(1:n)  # losowe mieszanie indeksów
   fold_size <- floor(n / k_folds)
   
-  # Przygotowujemy listę na wyniki dla każdej miary
-  results <- list()
+  # Przygotowujemy listy na wyniki dla każdej metryki osobno dla treningowych i testowych foldów
+  results_train <- list()
+  results_test  <- list()
   for (metric in names(performance_funcs)) {
-    results[[metric]] <- numeric(k_folds)
+    results_train[[metric]] <- numeric(k_folds)
+    results_test[[metric]]  <- numeric(k_folds)
   }
   
   for (i in 1:k_folds) {
@@ -50,34 +52,52 @@ custom_cv <- function(data, k_folds, train_func, predict_func,
     train_data <- data[-test_idx, ]
     test_data  <- data[test_idx, ]
     
-    # Rozdzielamy cechy i zmienną celu
+    # Rozdzielenie cech i zmiennej celu
     train_X <- train_data[, setdiff(names(train_data), target_col)]
     train_y <- train_data[[target_col]]
     test_X  <- test_data[, setdiff(names(test_data), target_col)]
     test_y  <- test_data[[target_col]]
     
-    # Przygotowanie argumentów dla funkcji treningowej
+    # Trenowanie modelu
     args_train <- list(train_X, train_y)
     if (!is.null(hyperparams)) {
       args_train <- c(args_train, hyperparams)
     }
     model <- do.call(train_func, args_train)
     
-    # Przygotowanie argumentów dla funkcji predykcyjnej
-    args_predict <- list(model, test_X)
+    # Predykcje na zbiorze treningowym
+    args_predict_train <- list(model, train_X)
     if (!is.null(hyperparams) && pass_to_predict) {
-      args_predict <- c(args_predict, hyperparams)
+      args_predict_train <- c(args_predict_train, hyperparams)
     }
-    predictions <- do.call(predict_func, args_predict)
+    predictions_train <- do.call(predict_func, args_predict_train)
     
-    # Obliczamy i zapisujemy każdą miarę
+    # Predykcje na zbiorze testowym
+    args_predict_test <- list(model, test_X)
+    if (!is.null(hyperparams) && pass_to_predict) {
+      args_predict_test <- c(args_predict_test, hyperparams)
+    }
+    predictions_test <- do.call(predict_func, args_predict_test)
+    
+    # Obliczanie metryk dla obu zbiorów
     for (metric in names(performance_funcs)) {
-      results[[metric]][i] <- performance_funcs[[metric]](test_y, predictions)
+      results_train[[metric]][i] <- performance_funcs[[metric]](train_y, predictions_train)
+      results_test[[metric]][i]  <- performance_funcs[[metric]](test_y, predictions_test)
     }
   }
   
-  # Zwracamy średnie wartości dla każdej miary
-  sapply(results, mean)
+  # Obliczamy średnie i odchylenia standardowe dla treningowych i testowych wyników
+  summary_train <- lapply(results_train, function(x) list(mean = mean(x), sd = sd(x)))
+  summary_test  <- lapply(results_test,  function(x) list(mean = mean(x), sd = sd(x)))
+  
+  # Obliczamy różnice (test - train) dla średnich wartości
+  summary_diff <- lapply(names(summary_train), function(metric) {
+    diff_mean <- summary_test[[metric]]$mean - summary_train[[metric]]$mean
+    list(mean_diff = diff_mean)
+  })
+  names(summary_diff) <- names(summary_train)
+  
+  return(list(train = summary_train, test = summary_test, diff = summary_diff))
 }
 
 # ============================================================
@@ -201,9 +221,9 @@ train_nn <- function(train_X, train_y, hidden_neurons, epochs, learning_rate, cl
     error <- train_y - output
     loss <- mean(error^2)
     
-    if (epoch %% 100 == 0) {
-      cat("Epoka:", epoch, "Strata:", loss, "\n")
-    }
+    #if (epoch %% 100 == 0) {
+    #  cat("Epoka:", epoch, "Strata:", loss, "\n")
+    #}
     
     # Obliczanie gradientów
     d_output <- error  # dla regresji z liniową aktywacją na wyjściu
@@ -266,8 +286,15 @@ predict_knn_classification <- function(model, test_X, k = 10, threshold = 0.5) {
 
 # --- Drzewo decyzyjne dla klasyfikacji ---
 train_tree_classification <- function(X, y, depth, ...) {
-  if (depth == 0 || length(unique(y)) == 1) {
-    return(as.integer(names(sort(table(y), decreasing = TRUE)[1])))
+  # Upewnij się, że y jest faktorem
+  y <- as.factor(y)
+  
+  # Usuń NA z y, aby warunek mógł poprawnie działać
+  y_clean <- na.omit(y)
+  
+  # Warunek zatrzymania: osiągnięto maksymalną głębokość lub wszystkie etykiety są takie same
+  if (depth == 0 || length(unique(y_clean)) == 1) {
+    return(names(which.max(table(y_clean))))
   }
   
   best_split <- NULL
@@ -278,32 +305,41 @@ train_tree_classification <- function(X, y, depth, ...) {
     for (split in unique(X[, feature])) {
       left_indices <- X[, feature] <= split
       right_indices <- X[, feature] > split
+      
+      # Sprawdzenie, czy podział daje niepuste zbiory
+      if (sum(left_indices) == 0 || sum(right_indices) == 0) next
+      
       left <- y[left_indices]
       right <- y[right_indices]
       
-      if (length(left) == 0 || length(right) == 0) {
-        next
-      }
-      
-      gini <- (length(left) / length(y)) * (1 - sum(left) / length(left)) + 
-        (length(right) / length(y)) * (1 - sum(right) / length(right))
+      # Obliczamy impurity Gini dla każdego podzbioru:
+      gini_left <- 1 - sum((table(left) / length(left))^2)
+      gini_right <- 1 - sum((table(right) / length(right))^2)
+      gini <- (length(left) / length(y)) * gini_left + (length(right) / length(y)) * gini_right
       
       if (!is.na(gini) && gini < best_gini) {
         best_gini <- gini
-        best_split <- list(feature = feature, value = split, left_indices = left_indices, right_indices = right_indices)
+        best_split <- list(feature = feature, value = split)
       }
     }
   }
   
+  # Jeśli nie znaleziono dobrego podziału, zwróć najczęściej występującą etykietę
   if (is.null(best_split)) {
-    return(as.integer(names(sort(table(y), decreasing = TRUE)[1])))
+    return(names(which.max(table(y_clean))))
   }
   
-  left_tree <- train_tree_classification(X[best_split$left_indices, , drop = FALSE], y[best_split$left_indices], depth - 1)
-  right_tree <- train_tree_classification(X[best_split$right_indices, , drop = FALSE], y[best_split$right_indices], depth - 1)
+  # Rekurencyjne budowanie drzewa
+  left_indices <- X[, best_split$feature] <= best_split$value
+  right_indices <- X[, best_split$feature] > best_split$value
+  
+  left_tree <- train_tree_classification(X[left_indices, , drop = FALSE], y[left_indices], depth - 1)
+  right_tree <- train_tree_classification(X[right_indices, , drop = FALSE], y[right_indices], depth - 1)
   
   return(list(split = best_split, left = left_tree, right = right_tree))
 }
+
+
 
 predict_tree_classification <- function(tree, X, ...) {
   predictions <- numeric(nrow(X))
@@ -354,9 +390,9 @@ train_nn_classification <- function(train_X, train_y, hidden_neurons = 50, epoch
     loss_history[epoch] <- loss
     
     # Wypisywanie co 100 epok
-    if (epoch %% 100 == 0) {
-      cat("Epoka:", epoch, "Strata:", loss, "\n")
-    }
+    #if (epoch %% 100 == 0) {
+    #  cat("Epoka:", epoch, "Strata:", loss, "\n")
+    #}
     
     d_output <- error * sigmoid_derivative(output_layer)
     d_hidden <- d_output %*% t(w_output) * (1 - hidden_layer^2)
@@ -545,9 +581,9 @@ train_nn_multiclass <- function(train_X, train_y, hidden_neurons = 100, epochs =
     w_hidden <- w_hidden - learning_rate * d_w_hidden
     b_hidden <- b_hidden - learning_rate * d_b_hidden
     
-    if (epoch %% 100 == 0) {
-      cat("Epoka:", epoch, "Strata:", loss, "\n")
-    }
+    #if (epoch %% 100 == 0) {
+    #  cat("Epoka:", epoch, "Strata:", loss, "\n")
+    #}
   }
   
   return(list(

@@ -257,6 +257,59 @@ predict_nn_reg <- function(model, test_data) {
   return(as.numeric(z_out))
 }
 
+# CV dla własnego modelu KNN (regresja)
+custom_knn_cv <- function(k_value) {
+  mse_fold <- numeric(length(folds_reg))
+  for(i in seq_along(folds_reg)) {
+    fold_idx <- folds_reg[[i]]
+    x_tr_cv <- x_train_scaled[-fold_idx, ]
+    y_tr_cv <- y_train[-fold_idx]
+    x_val_cv <- x_train_scaled[fold_idx, ]
+    y_val_cv <- y_train[fold_idx]
+    
+    preds_cv <- knn_my_regression(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
+    mse_fold[i] <- mse(preds_cv, y_val_cv)
+  }
+  return(mse_fold)  
+}
+
+# CV dla własnego drzewa decyzyjnego (regresja)
+custom_tree_cv <- function(depth_value) {
+  mse_fold <- numeric(length(folds_reg))
+  for(i in seq_along(folds_reg)) {
+    fold_idx <- folds_reg[[i]]
+    x_tr_cv <- x_train_scaled[-fold_idx, ]
+    y_tr_cv <- y_train[-fold_idx]
+    x_val_cv <- x_train_scaled[fold_idx, ]
+    y_val_cv <- y_train[fold_idx]
+    
+    tree_mod_cv <- decision_tree_reg(x_tr_cv, y_tr_cv, depth = depth_value)
+    preds_cv <- predict_tree_reg(tree_mod_cv, x_val_cv)
+    mse_fold[i] <- mse(preds_cv, y_val_cv)
+  }
+  return(mse_fold)
+}
+
+# CV dla własnej sieci neuronowej (regresja)
+custom_nn_cv <- function(hidden_neurons, epochs, lr) {
+  mse_fold <- numeric(length(folds_reg))
+  for(i in seq_along(folds_reg)) {
+    fold_idx <- folds_reg[[i]]
+    x_tr_cv <- x_train_scaled[-fold_idx, ]
+    y_tr_cv <- y_train[-fold_idx]
+    x_val_cv <- x_train_scaled[fold_idx, ]
+    y_val_cv <- y_train[fold_idx]
+    
+    nn_mod_cv <- neural_network_my(x_tr_cv, y_tr_cv, hidden_layers = hidden_neurons, epochs = epochs, learning_rate = lr)
+    preds_cv <- predict_nn_reg(nn_mod_cv, x_val_cv)
+    mse_fold[i] <- mse(as.numeric(preds_cv), y_val_cv)
+  }
+  return(mean(mse_fold))
+}
+
+
+
+#klasYFIKACJA_BINARNA##
 
 # Implementacja KNN dla klasyfikacji binarnej
 knn_binary <- function(train_data, train_labels, test_data, k = 3) {
@@ -482,6 +535,89 @@ predict_nn_binary <- function(model, test_data) {
   predictions <- ifelse(a2 > 0.5, 1, 0)
   return(predictions)
 }
+# CV dla własnego modelu KNN (klasyfikacja)
+custom_knn_class_cv <- function(k_value) {
+  acc_fold <- numeric(length(folds_class))
+  for(i in seq_along(folds_class)) {
+    fold_idx <- folds_class[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    preds_cv <- knn_binary(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
+    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
+  }
+  return(mean(acc_fold))
+}
+
+# CV dla własnego drzewa decyzyjnego (klasyfikacja)
+custom_tree_class_cv <- function(depth_value) {
+  acc_fold <- numeric(length(folds_class))
+  for(i in seq_along(folds_class)) {
+    fold_idx <- folds_class[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    tree_mod_cv <- decision_tree_binary(x_tr_cv, y_tr_cv, depth = depth_value)
+    preds_cv <- predict_tree_binary(tree_mod_cv, x_val_cv)
+    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
+  }
+  return(mean(acc_fold))
+}
+
+
+# CV dla własnej sieci neuronowej (klasyfikacja)
+custom_nn_class_cv <- function(hidden_neurons, epochs, lr) {
+  acc_fold <- numeric(length(folds_class))
+  for(i in seq_along(folds_class)) {
+    fold_idx <- folds_class[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    nn_mod_cv <- neural_network_binary(x_tr_cv, y_tr_cv, hidden_neurons = hidden_neurons, epochs = epochs, learning_rate = lr)
+    preds_cv <- predict_nn_binary(nn_mod_cv, x_val_cv)
+    acc_fold[i] <- accuracy_b(preds_cv, y_val_cv)
+  }
+  return(mean(acc_fold))
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #klas.wieloklasowa
@@ -767,4 +903,55 @@ predict_tree_w <- function(tree, data) {
     }
   }
   return(predictions)
+}
+
+# CV dla własnego modelu KNN (wieloklasowa)
+custom_knn_multi_cv <- function(k_value) {
+  acc_fold <- numeric(length(folds_multi))
+  for(i in seq_along(folds_multi)) {
+    fold_idx <- folds_multi[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    preds_cv <- knn_wieloklasowa(x_tr_cv, y_tr_cv, x_val_cv, k = k_value)
+    acc_fold[i] <- accuracy(preds_cv, as.numeric(as.character(y_val_cv)))
+  }
+  return(mean(acc_fold))
+}
+
+# CV dla własnego drzewa decyzyjnego (wieloklasowa)
+custom_tree_multi_cv <- function(depth_value) {
+  acc_fold <- numeric(length(folds_multi))
+  for(i in seq_along(folds_multi)) {
+    fold_idx <- folds_multi[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    tree_mod_cv <- decision_tree_w(x_tr_cv, y_tr_cv, depth = depth_value, criterion = "entropy")
+    preds_cv <- predict_tree_w(tree_mod_cv, x_val_cv)
+    preds_cv <- factor(preds_cv, levels = levels(train_labels))
+    acc_fold[i] <- accuracy(preds_cv, y_val_cv)
+  }
+  return(mean(acc_fold))
+}
+
+# CV dla własnej sieci neuronowej (wieloklasowa)
+custom_nn_multi_cv <- function(hidden_neurons, epochs, lr) {
+  acc_fold <- numeric(length(folds_multi))
+  for(i in seq_along(folds_multi)) {
+    fold_idx <- folds_multi[[i]]
+    x_tr_cv <- train_data[-fold_idx, ]
+    y_tr_cv <- train_labels[-fold_idx]
+    x_val_cv <- train_data[fold_idx, ]
+    y_val_cv <- train_labels[fold_idx]
+    
+    nn_mod_cv <- neural_network_train(x_tr_cv, y_tr_cv, hidden_neurons = hidden_neurons, epochs = epochs, learning_rate = lr)
+    preds_cv <- predict_nn(nn_mod_cv, x_val_cv)
+    acc_fold[i] <- accuracy(preds_cv, y_val_cv)
+  }
+  return(mean(acc_fold))
 }
